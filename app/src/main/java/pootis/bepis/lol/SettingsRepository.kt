@@ -3,6 +3,7 @@ package pootis.bepis.lol
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -16,13 +17,15 @@ class SettingsRepository(private val context: Context) {
         val WEBDAV_URL = stringPreferencesKey("webdav_url")
         val USERNAME = stringPreferencesKey("username")
         val PASSWORD = stringPreferencesKey("password")
+        val BACKGROUND_SYNC = booleanPreferencesKey("background_sync")
     }
 
     val settingsFlow: Flow<WebDavSettings> = context.dataStore.data.map { preferences ->
         WebDavSettings(
             url = preferences[WEBDAV_URL] ?: "",
             username = preferences[USERNAME] ?: "",
-            password = preferences[PASSWORD] ?: ""
+            password = preferences[PASSWORD] ?: "",
+            backgroundSync = preferences[BACKGROUND_SYNC] ?: false
         )
     }
 
@@ -31,6 +34,7 @@ class SettingsRepository(private val context: Context) {
             preferences[WEBDAV_URL] = settings.url
             preferences[USERNAME] = settings.username
             preferences[PASSWORD] = settings.password
+            preferences[BACKGROUND_SYNC] = settings.backgroundSync
         }
     }
 }
@@ -38,5 +42,6 @@ class SettingsRepository(private val context: Context) {
 data class WebDavSettings(
     val url: String,
     val username: String,
-    val password: String
+    val password: String,
+    val backgroundSync: Boolean = false
 )

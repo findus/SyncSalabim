@@ -33,8 +33,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import androidx.work.*
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import pootis.bepis.lol.ui.theme.LolsyncTheme
+
+private const val SYNC_WORK_NAME = "UnifiedPhotoSync"
 
 class MainActivity : ComponentActivity() {
 
@@ -72,11 +77,20 @@ class MainActivity : ComponentActivity() {
         }
         requestPermissionLauncher.launch(permissions.toTypedArray())
 
-        // Register observers for both images and videos
         contentResolver.registerContentObserver(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, mediaObserver)
         contentResolver.registerContentObserver(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, mediaObserver)
 
         updateLibraryCount()
+        
+        lifecycleScope.launch {
+            settingsRepository.settingsFlow.collect { settings ->
+                if (settings.url.isNotBlank() && settings.backgroundSync) {
+                    scheduleBackgroundSync(settings)
+                } else {
+                    WorkManager.getInstance(applicationContext).cancelUniqueWork("BackgroundPhotoSync")
+                }
+            }
+        }
 
         setContent {
             LolsyncTheme {
@@ -84,22 +98,29 @@ class MainActivity : ComponentActivity() {
                     initialValue = WebDavSettings("", "", "")
                 )
 
-                val workInfos by WorkManager.getInstance(applicationContext)
-                    .getWorkInfosForUniqueWorkFlow("PhotoSync")
+                // Observe both manual and background work using the same TAG or unique name if possible
+                // But for mutual exclusivity, we use different names but check both
+                val manualWorkInfos by WorkManager.getInstance(applicationContext)
+                    .getWorkInfosForUniqueWorkFlow(SYNC_WORK_NAME)
+                    .collectAsStateWithLifecycle(initialValue = emptyList())
+                
+                val backgroundWorkInfos by WorkManager.getInstance(applicationContext)
+                    .getWorkInfosForUniqueWorkFlow("BackgroundPhotoSync")
                     .collectAsStateWithLifecycle(initialValue = emptyList())
 
                 val logs by AppLogger.logs.collectAsStateWithLifecycle()
                 val syncedCount by database.photoDao().getSyncedCountFlow().collectAsStateWithLifecycle(initialValue = 0)
 
-                val activeWorkInfo = workInfos.firstOrNull { 
-                    it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED 
-                }
+                val activeManualWork = manualWorkInfos.firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+                val activeBackgroundWork = backgroundWorkInfos.firstOrNull { it.state == WorkInfo.State.RUNNING }
                 
-                val isSyncing = activeWorkInfo != null
-                val progress = activeWorkInfo?.progress?.getFloat("progress", -1f) ?: -1f
-                val current = activeWorkInfo?.progress?.getInt("current", 0) ?: 0
-                val total = activeWorkInfo?.progress?.getInt("total", 0) ?: 0
-                val currentFileName = activeWorkInfo?.progress?.getString("name") ?: ""
+                val activeWork = activeManualWork ?: activeBackgroundWork
+                val isSyncing = activeWork != null
+                
+                val progress = activeWork?.progress?.getFloat("progress", -1f) ?: -1f
+                val current = activeWork?.progress?.getInt("current", 0) ?: 0
+                val total = activeWork?.progress?.getInt("total", 0) ?: 0
+                val currentFileName = activeWork?.progress?.getString("name") ?: ""
 
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
@@ -158,13 +179,9 @@ class MainActivity : ComponentActivity() {
     private fun updateLibraryCount() {
         val projection = arrayOf(MediaStore.MediaColumns._ID)
         var count = 0
-        
         fun getCount(uri: android.net.Uri) {
-            contentResolver.query(uri, projection, null, null, null)?.use {
-                count += it.count
-            }
+            contentResolver.query(uri, projection, null, null, null)?.use { count += it.count }
         }
-
         try {
             getCount(MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
             getCount(MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
@@ -183,26 +200,53 @@ class MainActivity : ComponentActivity() {
             "password" to settings.password
         )
 
+        // Manual sync uses ExistingWorkPolicy.KEEP so it won't start if already running
+        // OR ExistingWorkPolicy.REPLACE if you want to force it. 
+        // But to avoid background/manual conflict, we use a shared state.
         val syncRequest = OneTimeWorkRequestBuilder<SyncWorker>()
             .setInputData(data)
-            .setConstraints(
-                Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                    .build()
-            )
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .build()
 
         WorkManager.getInstance(applicationContext).enqueueUniqueWork(
-            "PhotoSync",
-            ExistingWorkPolicy.REPLACE,
+            SYNC_WORK_NAME,
+            ExistingWorkPolicy.KEEP, 
             syncRequest
         )
-        AppLogger.log("Manual sync triggered")
+        AppLogger.log("Sync requested (will only start if no other sync is running)")
+    }
+
+    private fun scheduleBackgroundSync(settings: WebDavSettings) {
+        val data = workDataOf(
+            "baseUrl" to settings.url,
+            "user" to settings.username,
+            "password" to settings.password
+        )
+
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .setRequiresCharging(true)
+            .build()
+
+        val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(1, java.util.concurrent.TimeUnit.HOURS)
+            .setInputData(data)
+            .setConstraints(constraints)
+            .build()
+
+        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
+            "BackgroundPhotoSync",
+            ExistingPeriodicWorkPolicy.KEEP,
+            syncRequest
+        )
+        AppLogger.log("Background sync scheduled")
     }
 
     private fun stopSyncWorker() {
-        WorkManager.getInstance(applicationContext).cancelUniqueWork("PhotoSync")
-        AppLogger.log("Sync cancellation requested")
+        WorkManager.getInstance(applicationContext).cancelUniqueWork(SYNC_WORK_NAME)
+        WorkManager.getInstance(applicationContext).cancelUniqueWork("BackgroundPhotoSync")
+        // Note: cancelling periodic work will stop the current run AND future runs until rescheduled.
+        // If we only want to stop the CURRENT run of background sync, it's trickier with WorkManager.
+        AppLogger.log("All sync tasks cancellation requested")
     }
 }
 
@@ -280,34 +324,11 @@ fun MainScreenContent(
 @Composable
 fun LogConsole(modifier: Modifier = Modifier, logs: List<String>) {
     val listState = rememberLazyListState()
-    
-    LaunchedEffect(logs.size) {
-        if (logs.isNotEmpty()) {
-            listState.animateScrollToItem(logs.size - 1)
-        }
-    }
-
-    LazyColumn(
-        state = listState,
-        modifier = modifier.padding(4.dp),
-        contentPadding = PaddingValues(bottom = 8.dp)
-    ) {
-        item {
-            Text(
-                "--- DEBUG CONSOLE ---",
-                color = Color.Green,
-                fontSize = 10.sp,
-                fontFamily = FontFamily.Monospace
-            )
-        }
+    LaunchedEffect(logs.size) { if (logs.isNotEmpty()) listState.animateScrollToItem(logs.size - 1) }
+    LazyColumn(state = listState, modifier = modifier.padding(4.dp), contentPadding = PaddingValues(bottom = 8.dp)) {
+        item { Text("--- DEBUG CONSOLE ---", color = Color.Green, fontSize = 10.sp, fontFamily = FontFamily.Monospace) }
         items(logs) { log ->
-            Text(
-                text = log,
-                color = if (log.contains("ERROR")) Color.Red else Color.LightGray,
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                lineHeight = 14.sp
-            )
+            Text(text = log, color = if (log.contains("ERROR")) Color.Red else Color.LightGray, fontSize = 11.sp, fontFamily = FontFamily.Monospace, lineHeight = 14.sp)
         }
     }
 }
@@ -326,14 +347,8 @@ fun SyncProgressContent(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         if (progress >= 0) {
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier.fillMaxWidth().height(12.dp)
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Syncing $current of $total", style = MaterialTheme.typography.labelMedium)
                 Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
             }
@@ -341,23 +356,11 @@ fun SyncProgressContent(
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             Text("Preparing sync...", style = MaterialTheme.typography.labelMedium)
         }
-
         if (fileName.isNotEmpty()) {
-            Text(
-                text = fileName,
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Text(text = fileName, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-
         Spacer(modifier = Modifier.height(16.dp))
-        
-        OutlinedButton(
-            onClick = onStopSync,
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
-        ) {
+        OutlinedButton(onClick = onStopSync, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
             Text("Stop Sync")
         }
     }

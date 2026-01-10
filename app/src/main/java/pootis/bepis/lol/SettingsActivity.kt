@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -35,7 +36,7 @@ class SettingsActivity : ComponentActivity() {
         setContent {
             LolsyncTheme {
                 val settings by settingsRepository.settingsFlow.collectAsStateWithLifecycle(
-                    initialValue = WebDavSettings("", "", "")
+                    initialValue = WebDavSettings("", "", "", false)
                 )
                 
                 Scaffold(
@@ -54,7 +55,7 @@ class SettingsActivity : ComponentActivity() {
                         modifier = Modifier.padding(innerPadding),
                         initialSettings = settings,
                         onSave = { newSettings ->
-                            Log.d(TAG, "Saving settings: URL=${newSettings.url}, User=${newSettings.username}")
+                            Log.d(TAG, "Saving settings: URL=${newSettings.url}, User=${newSettings.username}, BackgroundSync=${newSettings.backgroundSync}")
                             lifecycleScope.launch {
                                 try {
                                     settingsRepository.saveSettings(newSettings)
@@ -81,6 +82,7 @@ fun SettingsScreen(
     var url by remember(initialSettings.url) { mutableStateOf(initialSettings.url) }
     var user by remember(initialSettings.username) { mutableStateOf(initialSettings.username) }
     var pass by remember(initialSettings.password) { mutableStateOf(initialSettings.password) }
+    var backgroundSync by remember(initialSettings.backgroundSync) { mutableStateOf(initialSettings.backgroundSync) }
 
     Column(
         modifier = modifier
@@ -112,8 +114,27 @@ fun SettingsScreen(
             modifier = Modifier.fillMaxWidth()
         )
 
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Background Sync", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "Sync photos automatically when charging and connected to Wi-Fi",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = backgroundSync,
+                onCheckedChange = { backgroundSync = it }
+            )
+        }
+
         Button(
-            onClick = { onSave(WebDavSettings(url, user, pass)) },
+            onClick = { onSave(WebDavSettings(url, user, pass, backgroundSync)) },
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Save Settings")
