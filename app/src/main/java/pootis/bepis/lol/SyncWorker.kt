@@ -1,0 +1,214 @@
+package pootis.bepis.lol
+
+import android.content.Context
+import android.net.Uri
+import android.provider.MediaStore
+import android.util.Log
+import androidx.work.CoroutineWorker
+import androidx.work.WorkerParameters
+import androidx.work.workDataOf
+import at.bitfire.dav4jvm.BasicDigestAuthHandler
+import okhttp3.Credentials
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.logging.HttpLoggingInterceptor
+import java.io.InputStream
+import java.text.SimpleDateFormat
+import java.util.*
+
+private const val TAG = "SyncWorker"
+
+class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
+    CoroutineWorker(appContext, workerParams) {
+
+    private val db = SyncDatabase.getDatabase(appContext)
+    
+    private val client = OkHttpClient.Builder()
+        .addInterceptor(HttpLoggingInterceptor { message ->
+            Log.d(TAG, message)
+            AppLogger.log("Network: $message")
+        }.apply {
+            level = HttpLoggingInterceptor.Level.HEADERS // BODY might be too much for images
+        })
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .build()
+
+    private fun log(message: String, error: Throwable? = null) {
+        if (error != null) {
+            Log.e(TAG, message, error)
+            AppLogger.log("ERROR: $message - ${error.message}")
+        } else {
+            Log.d(TAG, message)
+            AppLogger.log(message)
+        }
+    }
+
+    override suspend fun doWork(): Result {
+        log("Starting sync worker with dav4jvm...")
+        val baseUrlStr = inputData.getString("baseUrl")?.removeSuffix("/") ?: run {
+            log("Sync failed: Missing baseUrl")
+            return Result.failure()
+        }
+        val user = inputData.getString("user") ?: run {
+            log("Sync failed: Missing user")
+            return Result.failure()
+        }
+        val password = inputData.getString("password") ?: run {
+            log("Sync failed: Missing password")
+            return Result.failure()
+        }
+
+        val basicAuth = Credentials.basic(user, password)
+        val baseUrl = baseUrlStr.toHttpUrl()
+
+        try {
+            val itemsToSync = mutableListOf<MediaItem>()
+            itemsToSync.addAll(getPendingItems(MediaStore.Images.Media.EXTERNAL_CONTENT_URI))
+            itemsToSync.addAll(getPendingItems(MediaStore.Video.Media.EXTERNAL_CONTENT_URI))
+
+            val total = itemsToSync.size
+            log("Total items to sync: $total")
+
+            if (total == 0) {
+                setProgress(workDataOf("progress" to 1f, "current" to 0, "total" to 0, "name" to "Done"))
+                return Result.success()
+            }
+
+            var current = 0
+            for (item in itemsToSync) {
+                current++
+                log("Processing ($current/$total): ${item.name}")
+                
+                setProgress(workDataOf(
+                    "progress" to (current.toFloat() / total),
+                    "current" to current,
+                    "total" to total,
+                    "name" to item.name
+                ))
+
+                if (uploadMedia(item, baseUrl, basicAuth)) {
+                    db.photoDao().insert(SyncedPhoto(item.id, item.name, System.currentTimeMillis()))
+                    log("Successfully synced: ${item.name}")
+                } else {
+                    log("Failed to upload: ${item.name}")
+
+                }
+            }
+            
+            log("Sync completed successfully")
+            return Result.success()
+        } catch (e: Exception) {
+            log("Sync failed with exception", e)
+            return Result.retry()
+        }
+    }
+
+    private suspend fun getPendingItems(collection: Uri): List<MediaItem> {
+        val pending = mutableListOf<MediaItem>()
+        val projection = arrayOf(
+            MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.DATE_TAKEN,
+            MediaStore.MediaColumns.MIME_TYPE
+        )
+
+        applicationContext.contentResolver.query(
+            collection,
+            projection,
+            null,
+            null,
+            "${MediaStore.MediaColumns.DATE_TAKEN} DESC"
+        )?.use { cursor ->
+            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+            val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+            val dateColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_TAKEN)
+            val mimeColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
+
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(idColumn)
+                if (!db.photoDao().isSynced(id)) {
+                    pending.add(MediaItem(
+                        id = id,
+                        name = cursor.getString(nameColumn),
+                        dateTaken = cursor.getLong(dateColumn),
+                        mimeType = cursor.getString(mimeColumn),
+                        collection = collection
+                    ))
+                }
+            }
+        }
+        return pending
+    }
+
+    private fun uploadMedia(item: MediaItem, baseUrl: okhttp3.HttpUrl, basicAuth: String): Boolean {
+        val date = Date(if (item.dateTaken > 0) item.dateTaken else System.currentTimeMillis())
+        val year = SimpleDateFormat("yyyy", Locale.US).format(date)
+        val month = SimpleDateFormat("MM", Locale.US).format(date)
+
+        try {
+            createDirectory(baseUrl.toString(), year, basicAuth)
+            createDirectory("$baseUrl/$year", month, basicAuth)
+        } catch (e: Exception) {
+            return false;
+        };
+
+        val targetUrl = baseUrl.newBuilder()
+            .addPathSegment(year)
+            .addPathSegment(month)
+            .addPathSegment(item.name)
+            .build()
+
+        return try {
+            val uri = Uri.withAppendedPath(item.collection, item.id.toString())
+            val inputStream: InputStream? = applicationContext.contentResolver.openInputStream(uri)
+            val bytes = inputStream?.readBytes() ?: run {
+                log("Could not read bytes for ${item.name}")
+                return false
+            }
+
+            val request = Request.Builder()
+                .url(targetUrl)
+                .put(bytes.toRequestBody(item.mimeType?.toMediaTypeOrNull()))
+                .addHeader("Authorization", basicAuth)
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                response.isSuccessful || response.code == 201 || response.code == 204
+            }
+
+        } catch (e: Exception) {
+            log("Exception during upload of ${item.name}", e)
+            false
+        }
+    }
+
+    private fun createDirectory(parentUrl: String, dirName: String, auth: String) {
+        val url = "$parentUrl/$dirName"
+        val request = Request.Builder()
+            .url(url)
+            .method("MKCOL", null)
+            .addHeader("Authorization", auth)
+            .build()
+        try {
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    log("Created directory: $url")
+                }
+            }
+        } catch (e: Exception) {
+            throw e;
+        }
+    }
+
+    data class MediaItem(
+        val id: Long,
+        val name: String,
+        val dateTaken: Long,
+        val mimeType: String?,
+        val collection: Uri
+    )
+}
