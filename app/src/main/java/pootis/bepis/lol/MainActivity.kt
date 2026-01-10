@@ -16,6 +16,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -27,6 +31,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -43,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.work.*
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import pootis.bepis.lol.ui.theme.LolsyncTheme
 import java.text.SimpleDateFormat
@@ -164,7 +170,7 @@ class MainActivity : ComponentActivity() {
 }
 
 sealed class Screen(val title: String, val icon: ImageVector) {
-    data object Sync : Screen("Sync", Icons.Default.Build)
+    data object Sync : Screen("Sync", Icons.Default.Sync)
     data object Entries : Screen("Entries", Icons.AutoMirrored.Filled.List)
     data object Settings : Screen("Settings", Icons.Default.Settings)
 }
@@ -349,6 +355,9 @@ fun EntriesScreen(modifier: Modifier = Modifier, entries: List<SyncedPhoto>, onD
             Text("No synced entries found.")
         }
     } else {
+        var itemsToDelete by remember { mutableStateOf(setOf<Long>()) }
+        val scope = rememberCoroutineScope()
+
         LazyColumn(modifier = modifier) {
             stickyHeader {
                 Surface(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.secondaryContainer) {
@@ -359,20 +368,42 @@ fun EntriesScreen(modifier: Modifier = Modifier, entries: List<SyncedPhoto>, onD
                     }
                 }
             }
-            items(entries) { entry ->
-                Row(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(entry.fileName, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(entry.timestamp)),
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodySmall,
-                        textAlign = TextAlign.Center
-                    )
-                    IconButton(onClick = { onDelete(entry) }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete entry", tint = MaterialTheme.colorScheme.error)
+            items(items = entries, key = { it.id }) { entry ->
+                AnimatedVisibility(
+                    visible = !itemsToDelete.contains(entry.id),
+                    exit = shrinkVertically(animationSpec = tween(300)) + fadeOut()
+                ) {
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = entry.fileName,
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(entry.timestamp)),
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center
+                            )
+                            IconButton(onClick = {
+                                scope.launch {
+                                    itemsToDelete = itemsToDelete + entry.id
+                                    delay(300) // Give time for the animation to play
+                                    onDelete(entry)
+                                }
+                            }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Delete entry", tint = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                        HorizontalDivider()
                     }
                 }
-                HorizontalDivider()
             }
         }
     }
