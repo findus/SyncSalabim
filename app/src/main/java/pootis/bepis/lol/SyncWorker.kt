@@ -31,14 +31,6 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
     private val db = SyncDatabase.getDatabase(appContext)
 
     private val client = OkHttpClient.Builder()
-        .addInterceptor(HttpLoggingInterceptor { message ->
-            Log.d(TAG, message)
-            AppLogger.log("Network: $message")
-        }.apply {
-            level = HttpLoggingInterceptor.Level.HEADERS
-        })
-        .followRedirects(true)
-        .followSslRedirects(true)
         .build()
 
     private fun log(message: String, error: Throwable? = null) {
