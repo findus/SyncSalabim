@@ -140,7 +140,7 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Photo Sync Status",
+                "Sync Status",
                 NotificationManager.IMPORTANCE_DEFAULT
             )
             notificationManager.createNotificationChannel(channel)

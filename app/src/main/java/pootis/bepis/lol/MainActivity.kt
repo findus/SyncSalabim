@@ -205,7 +205,7 @@ fun MainAppScreen(
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("Photo Sync") },
+                title = { Text("Sync-Salabim") },
                 actions = {
                     if (selectedScreen == Screen.Sync) {
                         IconButton(onClick = { AppLogger.clear() }) { Icon(Icons.Default.Delete, contentDescription = "Clear Logs") }
