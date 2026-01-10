@@ -3,9 +3,14 @@
 package pootis.bepis.lol
 
 import android.Manifest
+import android.content.ContentResolver
 import android.content.Intent
+import android.database.ContentObserver
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -34,14 +39,27 @@ import pootis.bepis.lol.ui.theme.LolsyncTheme
 class MainActivity : ComponentActivity() {
 
     private lateinit var settingsRepository: SettingsRepository
+    private lateinit var database: SyncDatabase
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { _ -> }
+    ) { _ -> 
+        updateLibraryCount()
+    }
+
+    private var totalLibraryCount by mutableIntStateOf(0)
+
+    private val mediaObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            super.onChange(selfChange)
+            updateLibraryCount()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settingsRepository = SettingsRepository(this)
+        database = SyncDatabase.getDatabase(this)
         enableEdgeToEdge()
 
         val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -50,6 +68,12 @@ class MainActivity : ComponentActivity() {
             arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
         requestPermissionLauncher.launch(permissions)
+
+        // Register observers for both images and videos
+        contentResolver.registerContentObserver(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, mediaObserver)
+        contentResolver.registerContentObserver(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, mediaObserver)
+
+        updateLibraryCount()
 
         setContent {
             LolsyncTheme {
@@ -62,6 +86,7 @@ class MainActivity : ComponentActivity() {
                     .collectAsStateWithLifecycle(initialValue = emptyList())
 
                 val logs by AppLogger.logs.collectAsStateWithLifecycle()
+                val syncedCount by database.photoDao().getSyncedCountFlow().collectAsStateWithLifecycle(initialValue = 0)
 
                 val activeWorkInfo = workInfos.firstOrNull { 
                     it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED 
@@ -100,6 +125,8 @@ class MainActivity : ComponentActivity() {
                             currentCount = current,
                             totalCount = total,
                             currentFileName = currentFileName,
+                            libraryTotal = totalLibraryCount,
+                            librarySynced = syncedCount,
                             onStartSync = {
                                 startSyncWorker(settings)
                             },
@@ -117,6 +144,30 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        contentResolver.unregisterContentObserver(mediaObserver)
+    }
+
+    private fun updateLibraryCount() {
+        val projection = arrayOf(MediaStore.MediaColumns._ID)
+        var count = 0
+        
+        fun getCount(uri: android.net.Uri) {
+            contentResolver.query(uri, projection, null, null, null)?.use {
+                count += it.count
+            }
+        }
+
+        try {
+            getCount(MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+            getCount(MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+            totalLibraryCount = count
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -161,6 +212,8 @@ fun MainScreenContent(
     currentCount: Int,
     totalCount: Int,
     currentFileName: String,
+    libraryTotal: Int,
+    librarySynced: Int,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit
 ) {
@@ -168,9 +221,33 @@ fun MainScreenContent(
         modifier = modifier
             .fillMaxWidth()
             .padding(16.dp),
-        verticalArrangement = Arrangement.Center,
+        verticalArrangement = Arrangement.Top,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Library Stats", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Total items:")
+                    Text("$libraryTotal")
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Synced items:")
+                    Text("$librarySynced")
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Remaining:")
+                    Text("${(libraryTotal - librarySynced).coerceAtLeast(0)}")
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
         if (settings.url.isBlank()) {
             Text(
                 "Please configure WebDAV settings in the top right corner before syncing.",
@@ -201,7 +278,6 @@ fun MainScreenContent(
 fun LogConsole(modifier: Modifier = Modifier, logs: List<String>) {
     val listState = rememberLazyListState()
     
-    // Auto-scroll to bottom when new logs arrive
     LaunchedEffect(logs.size) {
         if (logs.isNotEmpty()) {
             listState.animateScrollToItem(logs.size - 1)

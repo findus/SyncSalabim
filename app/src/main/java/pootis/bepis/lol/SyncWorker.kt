@@ -80,6 +80,7 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
             // Step 1: Pre-create all required folders
             log("Pre-creating folder structure...")
             val requiredPaths = itemsToSync.map { item ->
+                //TODO check if timezone is honored and exif data is used
                 val date = Date(if (item.dateTaken > 0) item.dateTaken else System.currentTimeMillis())
                 val year = SimpleDateFormat("yyyy", Locale.US).format(date)
                 val month = SimpleDateFormat("MM", Locale.US).format(date)
@@ -96,13 +97,12 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
             }
 
             // Step 2: Upload items
-            var current = 0
-            for (item in itemsToSync) {
-                current++
+            for ((index, item) in itemsToSync.withIndex()) {
+                val current = index + 1
                 log("Uploading ($current/$total): ${item.name}")
 
                 setProgress(workDataOf(
-                    "progress" to (current.toFloat() / total),
+                    "progress" to (index.toFloat() / total),
                     "current" to current,
                     "total" to total,
                     "name" to item.name
@@ -115,6 +115,14 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
                     log("Failed to upload: ${item.name}")
                 }
             }
+
+            // Ensure we hit exactly 100% and show "Done" at the very end
+            setProgress(workDataOf(
+                "progress" to 1f,
+                "current" to total,
+                "total" to total,
+                "name" to "Done"
+            ))
 
             log("Sync completed successfully")
             return Result.success()

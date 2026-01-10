@@ -2,6 +2,7 @@ package pootis.bepis.lol
 
 import android.content.Context
 import androidx.room.*
+import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "synced_photos")
 data class SyncedPhoto(
@@ -20,6 +21,9 @@ interface PhotoDao {
 
     @Query("SELECT EXISTS(SELECT 1 FROM synced_photos WHERE id = :id)")
     suspend fun isSynced(id: Long): Boolean
+
+    @Query("SELECT COUNT(*) FROM synced_photos")
+    fun getSyncedCountFlow(): Flow<Int>
 }
 
 @Database(entities = [SyncedPhoto::class], version = 1)
