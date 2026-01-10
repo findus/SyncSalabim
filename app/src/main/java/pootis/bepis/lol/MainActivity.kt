@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -20,11 +21,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Build
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,6 +34,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -45,6 +49,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 private const val SYNC_WORK_NAME = "UnifiedPhotoSync"
+private const val TAG = "MainActivity"
 
 class MainActivity : ComponentActivity() {
 
@@ -104,8 +109,7 @@ class MainActivity : ComponentActivity() {
                     database = database,
                     totalLibraryCount = totalLibraryCount,
                     onStartSync = { startSyncWorker(it) },
-                    onStopSync = { stopSyncWorker() },
-                    onOpenSettings = { startActivity(Intent(this, SettingsActivity::class.java)) }
+                    onStopSync = { stopSyncWorker() }
                 )
             }
         }
@@ -162,6 +166,7 @@ class MainActivity : ComponentActivity() {
 sealed class Screen(val title: String, val icon: ImageVector) {
     data object Sync : Screen("Sync", Icons.Default.Build)
     data object Entries : Screen("Entries", Icons.AutoMirrored.Filled.List)
+    data object Settings : Screen("Settings", Icons.Default.Settings)
 }
 
 @Composable
@@ -170,8 +175,7 @@ fun MainAppScreen(
     database: SyncDatabase,
     totalLibraryCount: Int,
     onStartSync: (WebDavSettings) -> Unit,
-    onStopSync: () -> Unit,
-    onOpenSettings: () -> Unit
+    onStopSync: () -> Unit
 ) {
     var selectedScreen by remember { mutableStateOf<Screen>(Screen.Sync) }
     val scope = rememberCoroutineScope()
@@ -197,14 +201,15 @@ fun MainAppScreen(
             CenterAlignedTopAppBar(
                 title = { Text("Photo Sync") },
                 actions = {
-                    IconButton(onClick = { AppLogger.clear() }) { Icon(Icons.Default.Delete, contentDescription = "Clear Logs") }
-                    IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, contentDescription = "Settings") }
+                    if (selectedScreen == Screen.Sync) {
+                        IconButton(onClick = { AppLogger.clear() }) { Icon(Icons.Default.Delete, contentDescription = "Clear Logs") }
+                    }
                 }
             )
         },
         bottomBar = {
             NavigationBar {
-                val screens = listOf(Screen.Sync, Screen.Entries)
+                val screens = listOf(Screen.Sync, Screen.Entries, Screen.Settings)
                 screens.forEach { screen ->
                     NavigationBarItem(
                         icon = { Icon(screen.icon, contentDescription = screen.title) },
@@ -246,6 +251,24 @@ fun MainAppScreen(
                         }
                     )
                 }
+                Screen.Settings -> {
+                    SettingsTabScreen(
+                        modifier = Modifier.fillMaxSize(),
+                        initialSettings = settings,
+                        onSave = { newSettings ->
+                            Log.d(TAG, "Saving settings: URL=${newSettings.url}, User=${newSettings.username}")
+                            scope.launch {
+                                try {
+                                    settingsRepository.saveSettings(newSettings)
+                                    AppLogger.log("Settings saved")
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Failed to save settings", e)
+                                    AppLogger.log("ERROR: Failed to save settings")
+                                }
+                            }
+                        }
+                    )
+                }
             }
         }
     }
@@ -280,7 +303,7 @@ fun MainSyncContent(
         Spacer(modifier = Modifier.height(24.dp))
 
         if (settings.url.isBlank()) {
-            Text("Please configure WebDAV settings in the top right corner.", color = MaterialTheme.colorScheme.error)
+            Text("Please configure WebDAV settings in the Settings tab.", color = MaterialTheme.colorScheme.error)
         } else {
             Text("Ready to sync to:", style = MaterialTheme.typography.labelLarge)
             Text(settings.url, style = MaterialTheme.typography.bodyMedium)
@@ -351,6 +374,75 @@ fun EntriesScreen(modifier: Modifier = Modifier, entries: List<SyncedPhoto>, onD
                 }
                 HorizontalDivider()
             }
+        }
+    }
+}
+
+@Composable
+fun SettingsTabScreen(
+    modifier: Modifier = Modifier,
+    initialSettings: WebDavSettings,
+    onSave: (WebDavSettings) -> Unit
+) {
+    var url by remember(initialSettings.url) { mutableStateOf(initialSettings.url) }
+    var user by remember(initialSettings.username) { mutableStateOf(initialSettings.username) }
+    var pass by remember(initialSettings.password) { mutableStateOf(initialSettings.password) }
+    var backgroundSync by remember(initialSettings.backgroundSync) { mutableStateOf(initialSettings.backgroundSync) }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        OutlinedTextField(
+            value = url,
+            onValueChange = { url = it },
+            label = { Text("WebDAV URL") },
+            placeholder = { Text("https://dav.example.com/photos") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        OutlinedTextField(
+            value = user,
+            onValueChange = { user = it },
+            label = { Text("Username") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        OutlinedTextField(
+            value = pass,
+            onValueChange = { pass = it },
+            label = { Text("Password") },
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Background Sync", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "Sync photos automatically when charging and connected to Wi-Fi",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = backgroundSync,
+                onCheckedChange = { backgroundSync = it }
+            )
+        }
+
+        Button(
+            onClick = { onSave(WebDavSettings(url, user, pass, backgroundSync)) },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Save Settings")
         }
     }
 }
