@@ -7,7 +7,6 @@ import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
-import at.bitfire.dav4jvm.BasicDigestAuthHandler
 import okhttp3.Credentials
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -25,13 +24,13 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
     CoroutineWorker(appContext, workerParams) {
 
     private val db = SyncDatabase.getDatabase(appContext)
-    
+
     private val client = OkHttpClient.Builder()
         .addInterceptor(HttpLoggingInterceptor { message ->
             Log.d(TAG, message)
             AppLogger.log("Network: $message")
         }.apply {
-            level = HttpLoggingInterceptor.Level.HEADERS // BODY might be too much for images
+            level = HttpLoggingInterceptor.Level.HEADERS
         })
         .followRedirects(true)
         .followSslRedirects(true)
@@ -48,7 +47,7 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
     }
 
     override suspend fun doWork(): Result {
-        log("Starting sync worker with dav4jvm...")
+        log("Starting sync worker...")
         val baseUrlStr = inputData.getString("baseUrl")?.removeSuffix("/") ?: run {
             log("Sync failed: Missing baseUrl")
             return Result.failure()
@@ -78,11 +77,30 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
                 return Result.success()
             }
 
+            // Step 1: Pre-create all required folders
+            log("Pre-creating folder structure...")
+            val requiredPaths = itemsToSync.map { item ->
+                val date = Date(if (item.dateTaken > 0) item.dateTaken else System.currentTimeMillis())
+                val year = SimpleDateFormat("yyyy", Locale.US).format(date)
+                val month = SimpleDateFormat("MM", Locale.US).format(date)
+                year to month
+            }.distinct()
+
+            val createdYears = mutableSetOf<String>()
+            for ((year, month) in requiredPaths) {
+                if (year !in createdYears) {
+                    createDirectory(baseUrl.toString(), year, basicAuth)
+                    createdYears.add(year)
+                }
+                createDirectory("$baseUrl/$year", month, basicAuth)
+            }
+
+            // Step 2: Upload items
             var current = 0
             for (item in itemsToSync) {
                 current++
-                log("Processing ($current/$total): ${item.name}")
-                
+                log("Uploading ($current/$total): ${item.name}")
+
                 setProgress(workDataOf(
                     "progress" to (current.toFloat() / total),
                     "current" to current,
@@ -95,10 +113,9 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
                     log("Successfully synced: ${item.name}")
                 } else {
                     log("Failed to upload: ${item.name}")
-
                 }
             }
-            
+
             log("Sync completed successfully")
             return Result.success()
         } catch (e: Exception) {
@@ -149,13 +166,6 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
         val year = SimpleDateFormat("yyyy", Locale.US).format(date)
         val month = SimpleDateFormat("MM", Locale.US).format(date)
 
-        try {
-            createDirectory(baseUrl.toString(), year, basicAuth)
-            createDirectory("$baseUrl/$year", month, basicAuth)
-        } catch (e: Exception) {
-            return false;
-        };
-
         val targetUrl = baseUrl.newBuilder()
             .addPathSegment(year)
             .addPathSegment(month)
@@ -200,7 +210,8 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
                 }
             }
         } catch (e: Exception) {
-            throw e;
+            // Log but don't rethrow, as folder might already exist
+            Log.v(TAG, "MKCOL failed for $url: ${e.message}")
         }
     }
 
