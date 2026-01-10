@@ -3,7 +3,10 @@
 package pootis.bepis.lol
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ContentResolver
+import android.content.Context
 import android.content.Intent
 import android.database.ContentObserver
 import android.os.Build
@@ -12,6 +15,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -21,6 +25,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -38,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -205,7 +211,7 @@ fun MainAppScreen(
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("Sync-Salabim") },
+                title = { Text("Photo Sync") },
                 actions = {
                     if (selectedScreen == Screen.Sync) {
                         IconButton(onClick = { AppLogger.clear() }) { Icon(Icons.Default.Delete, contentDescription = "Clear Logs") }
@@ -350,6 +356,7 @@ fun SyncProgressSection(progress: Float, current: Int, total: Int, fileName: Str
 
 @Composable
 fun EntriesScreen(modifier: Modifier = Modifier, entries: List<SyncedPhoto>, onDelete: (SyncedPhoto) -> Unit) {
+    val context = LocalContext.current
     if (entries.isEmpty()) {
         Box(modifier = modifier, contentAlignment = Alignment.Center) {
             Text("No synced entries found.")
@@ -375,7 +382,15 @@ fun EntriesScreen(modifier: Modifier = Modifier, entries: List<SyncedPhoto>, onD
                 ) {
                     Column {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(8.dp)
+                                .clickable {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val clip = ClipData.newPlainText("filename", entry.fileName)
+                                    clipboard.setPrimaryClip(clip)
+                                    Toast.makeText(context, "Copied: ${entry.fileName}", Toast.LENGTH_SHORT).show()
+                                },
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
