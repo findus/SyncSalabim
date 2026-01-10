@@ -62,12 +62,15 @@ class MainActivity : ComponentActivity() {
         database = SyncDatabase.getDatabase(this)
         enableEdgeToEdge()
 
-        val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+        val permissions = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.READ_MEDIA_IMAGES)
+            permissions.add(Manifest.permission.READ_MEDIA_VIDEO)
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
-        requestPermissionLauncher.launch(permissions)
+        requestPermissionLauncher.launch(permissions.toTypedArray())
 
         // Register observers for both images and videos
         contentResolver.registerContentObserver(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, mediaObserver)
