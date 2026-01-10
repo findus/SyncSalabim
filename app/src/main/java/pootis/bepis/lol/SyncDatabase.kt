@@ -13,8 +13,8 @@ data class SyncedPhoto(
 
 @Dao
 interface PhotoDao {
-    @Query("SELECT * FROM synced_photos")
-    suspend fun getAll(): List<SyncedPhoto>
+    @Query("SELECT * FROM synced_photos ORDER BY timestamp DESC")
+    fun getAllFlow(): Flow<List<SyncedPhoto>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(photo: SyncedPhoto)
@@ -24,6 +24,9 @@ interface PhotoDao {
 
     @Query("SELECT COUNT(*) FROM synced_photos")
     fun getSyncedCountFlow(): Flow<Int>
+
+    @Delete
+    suspend fun delete(photo: SyncedPhoto)
 }
 
 @Database(entities = [SyncedPhoto::class], version = 1)
