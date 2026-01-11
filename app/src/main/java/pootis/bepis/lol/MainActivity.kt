@@ -6,6 +6,7 @@ import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.database.ContentObserver
 import android.os.Build
 import android.os.Bundle
@@ -64,6 +65,7 @@ import java.util.*
 
 private const val SYNC_WORK_NAME = "UnifiedPhotoSync"
 private const val RECONCILE_WORK_NAME = "ReconcileDatabase"
+private const val BACKGROUND_WORK_NAME = "BackgroundPhotoSync"
 private const val TAG = "MainActivity"
 
 class MainActivity : ComponentActivity() {
@@ -105,12 +107,14 @@ class MainActivity : ComponentActivity() {
         contentResolver.registerContentObserver(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, mediaObserver)
         contentResolver.registerContentObserver(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, mediaObserver)
 
+        updateLibraryCount()
+
         lifecycleScope.launch {
             settingsRepository.settingsFlow.collect { settings ->
                 if (settings.url.isNotBlank() && settings.backgroundSync) {
                     scheduleBackgroundSync(settings)
                 } else {
-                    WorkManager.getInstance(applicationContext).cancelUniqueWork("BackgroundPhotoSync")
+                    WorkManager.getInstance(applicationContext).cancelUniqueWork(BACKGROUND_WORK_NAME)
                 }
                 // Trigger library count update whenever settings (including folder selection) change
                 updateLibraryCount(settings.selectedFolders)
@@ -193,8 +197,24 @@ class MainActivity : ComponentActivity() {
         return folders.toList().sorted()
     }
 
+    private fun isAnySyncRunning(): Boolean {
+        val wm = WorkManager.getInstance(applicationContext)
+        val statuses = listOf(
+            wm.getWorkInfosForUniqueWork(SYNC_WORK_NAME).get(),
+            wm.getWorkInfosForUniqueWork(RECONCILE_WORK_NAME).get(),
+            wm.getWorkInfosForUniqueWork(BACKGROUND_WORK_NAME).get()
+        )
+        return statuses.flatten().any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+    }
+
     private fun startSyncWorker(settings: WebDavSettings) {
         if (settings.url.isBlank()) return
+        if (isAnySyncRunning()) {
+            AppLogger.log("Sync skipped: another task is already running")
+            Toast.makeText(this, "A task is already running", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
         val data = workDataOf(
             "baseUrl" to settings.url,
             "user" to settings.username,
@@ -211,6 +231,12 @@ class MainActivity : ComponentActivity() {
 
     private fun startReconcileWorker(settings: WebDavSettings) {
         if (settings.url.isBlank()) return
+        if (isAnySyncRunning()) {
+            AppLogger.log("Reconciliation skipped: another task is already running")
+            Toast.makeText(this, "A task is already running", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         val data = workDataOf(
             "baseUrl" to settings.url,
             "user" to settings.username,
@@ -237,12 +263,12 @@ class MainActivity : ComponentActivity() {
             .setInputData(data)
             .setConstraints(constraints)
             .build()
-        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork("BackgroundPhotoSync", ExistingPeriodicWorkPolicy.KEEP, syncRequest)
+        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(BACKGROUND_WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, syncRequest)
     }
 
     private fun stopSyncWorker() {
         WorkManager.getInstance(applicationContext).cancelUniqueWork(SYNC_WORK_NAME)
-        WorkManager.getInstance(applicationContext).cancelUniqueWork("BackgroundPhotoSync")
+        WorkManager.getInstance(applicationContext).cancelUniqueWork(BACKGROUND_WORK_NAME)
         WorkManager.getInstance(applicationContext).cancelUniqueWork(RECONCILE_WORK_NAME)
         AppLogger.log("Cancellation requested")
     }
@@ -274,7 +300,7 @@ fun MainAppScreen(
 
     val workManager = WorkManager.getInstance(androidx.compose.ui.platform.LocalContext.current)
     val manualWorkInfos by workManager.getWorkInfosForUniqueWorkFlow(SYNC_WORK_NAME).collectAsStateWithLifecycle(initialValue = emptyList())
-    val backgroundWorkInfos by workManager.getWorkInfosForUniqueWorkFlow("BackgroundPhotoSync").collectAsStateWithLifecycle(initialValue = emptyList())
+    val backgroundWorkInfos by workManager.getWorkInfosForUniqueWorkFlow(BACKGROUND_WORK_NAME).collectAsStateWithLifecycle(initialValue = emptyList())
     val reconcileWorkInfos by workManager.getWorkInfosForUniqueWorkFlow(RECONCILE_WORK_NAME).collectAsStateWithLifecycle(initialValue = emptyList())
 
     val activeWork = (manualWorkInfos + backgroundWorkInfos + reconcileWorkInfos).firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
@@ -354,6 +380,7 @@ fun MainAppScreen(
                         modifier = Modifier.fillMaxSize(),
                         initialSettings = settings,
                         availableFolders = availableFolders,
+                        isSyncing = isSyncing,
                         onSave = { newSettings ->
                             Log.d(TAG, "Saving settings: URL=${newSettings.url}, User=${newSettings.username}")
                             scope.launch {
@@ -533,6 +560,7 @@ fun SettingsTabScreen(
     modifier: Modifier = Modifier,
     initialSettings: WebDavSettings,
     availableFolders: List<String>,
+    isSyncing: Boolean,
     onSave: (WebDavSettings) -> Unit
 ) {
     var url by remember(initialSettings.url) { mutableStateOf(initialSettings.url) }
@@ -553,7 +581,8 @@ fun SettingsTabScreen(
                 onValueChange = { url = it },
                 label = { Text("WebDAV URL") },
                 placeholder = { Text("https://dav.example.com/photos") },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isSyncing
             )
         }
 
@@ -562,7 +591,8 @@ fun SettingsTabScreen(
                 value = user,
                 onValueChange = { user = it },
                 label = { Text("Username") },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isSyncing
             )
         }
 
@@ -573,7 +603,8 @@ fun SettingsTabScreen(
                 label = { Text("Password") },
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isSyncing
             )
         }
 
@@ -593,7 +624,8 @@ fun SettingsTabScreen(
                 }
                 Switch(
                     checked = backgroundSync,
-                    onCheckedChange = { backgroundSync = it }
+                    onCheckedChange = { backgroundSync = it },
+                    enabled = !isSyncing
                 )
             }
         }
@@ -607,7 +639,7 @@ fun SettingsTabScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable {
+                    .clickable(enabled = !isSyncing) {
                         selectedFolders = if (selectedFolders.contains(folder)) {
                             selectedFolders - folder
                         } else {
@@ -618,9 +650,14 @@ fun SettingsTabScreen(
             ) {
                 Checkbox(
                     checked = selectedFolders.contains(folder),
-                    onCheckedChange = null // Handled by row clickable
+                    onCheckedChange = null, // Handled by row clickable
+                    enabled = !isSyncing
                 )
-                Text(folder, modifier = Modifier.padding(start = 8.dp))
+                Text(
+                    text = folder, 
+                    modifier = Modifier.padding(start = 8.dp),
+                    color = if (!isSyncing) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                )
             }
         }
 
@@ -630,7 +667,8 @@ fun SettingsTabScreen(
                     keyboardController?.hide()
                     onSave(WebDavSettings(url, user, pass, backgroundSync, selectedFolders)) 
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isSyncing
             ) {
                 Text("Save Settings")
             }
