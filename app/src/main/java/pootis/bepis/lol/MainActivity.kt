@@ -296,8 +296,13 @@ fun MainAppScreen(
                             Log.d(TAG, "Saving settings: URL=${newSettings.url}, User=${newSettings.username}")
                             scope.launch {
                                 try {
+                                    val urlChanged = newSettings.url != settings.url
                                     settingsRepository.saveSettings(newSettings)
                                     AppLogger.log("Settings saved")
+                                    if (urlChanged && newSettings.url.isNotBlank()) {
+                                        onStartReconcile(newSettings)
+                                    }
+
                                 } catch (e: Exception) {
                                     Log.e(TAG, "Failed to save settings", e)
                                     AppLogger.log("ERROR: Failed to save settings")
