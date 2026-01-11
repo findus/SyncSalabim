@@ -25,3 +25,6 @@ Seems like I have a strange workflow to save media form my phone to nextcloud, a
 
 I am an experienced iOS Developer, but have no experience in Android-Dev, a lot of code is generated.
 
+# Why the name
+
+Was the cringienst name an llm could spit out
