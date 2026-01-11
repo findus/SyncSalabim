@@ -58,6 +58,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.work.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import pootis.bepis.lol.ui.theme.LolsyncTheme
 import java.text.SimpleDateFormat
@@ -106,8 +107,6 @@ class MainActivity : ComponentActivity() {
         contentResolver.registerContentObserver(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, mediaObserver)
         contentResolver.registerContentObserver(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, mediaObserver)
 
-        updateLibraryCount()
-
         lifecycleScope.launch {
             settingsRepository.settingsFlow.collect { settings ->
                 if (settings.url.isNotBlank() && settings.backgroundSync) {
@@ -115,6 +114,8 @@ class MainActivity : ComponentActivity() {
                 } else {
                     WorkManager.getInstance(applicationContext).cancelUniqueWork("BackgroundPhotoSync")
                 }
+                // Trigger library count update whenever settings (including folder selection) change
+                updateLibraryCount(settings.selectedFolders)
             }
         }
 
@@ -126,7 +127,8 @@ class MainActivity : ComponentActivity() {
                     totalLibraryCount = totalLibraryCount,
                     onStartSync = { startSyncWorker(it) },
                     onStopSync = { stopSyncWorker() },
-                    onStartReconcile = { startReconcileWorker(it) }
+                    onStartReconcile = { startReconcileWorker(it) },
+                    availableFolders = getAvailableFolders()
                 )
             }
         }
@@ -137,24 +139,70 @@ class MainActivity : ComponentActivity() {
         contentResolver.unregisterContentObserver(mediaObserver)
     }
 
-    private fun updateLibraryCount() {
-        val projection = arrayOf(MediaStore.MediaColumns._ID)
-        var count = 0
-        fun getCount(uri: android.net.Uri) {
-            contentResolver.query(uri, projection, null, null, null)?.use { count += it.count }
+    private fun updateLibraryCount(selectedFolders: Set<String>? = null) {
+        lifecycleScope.launch {
+            val folders = selectedFolders ?: settingsRepository.settingsFlow.first().selectedFolders
+            
+            val projection = arrayOf(MediaStore.MediaColumns._ID)
+            var count = 0
+            
+            fun getCount(uri: android.net.Uri) {
+                val selection = if (folders.isNotEmpty()) {
+                    val placeholders = folders.joinToString(",") { "?" }
+                    "${MediaStore.MediaColumns.BUCKET_DISPLAY_NAME} IN ($placeholders)"
+                } else {
+                    null
+                }
+                val selectionArgs = if (folders.isNotEmpty()) {
+                    folders.toTypedArray()
+                } else {
+                    null
+                }
+                
+                contentResolver.query(uri, projection, selection, selectionArgs, null)?.use { count += it.count }
+            }
+            
+            try {
+                getCount(MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+                getCount(MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+                totalLibraryCount = count
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
+    }
+
+    private fun getAvailableFolders(): List<String> {
+        val folders = mutableSetOf<String>()
+        val projection = arrayOf(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
+        
+        fun query(uri: android.net.Uri) {
+            contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                val bucketColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
+                while (cursor.moveToNext()) {
+                    cursor.getString(bucketColumn)?.let { folders.add(it) }
+                }
+            }
+        }
+        
         try {
-            getCount(MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
-            getCount(MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
-            totalLibraryCount = count
+            query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+            query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
         } catch (e: Exception) {
             e.printStackTrace()
         }
+        
+        return folders.toList().sorted()
     }
 
     private fun startSyncWorker(settings: WebDavSettings) {
         if (settings.url.isBlank()) return
-        val data = workDataOf("baseUrl" to settings.url, "user" to settings.username, "password" to settings.password)
+        val data = workDataOf(
+            "baseUrl" to settings.url,
+            "user" to settings.username,
+            "password" to settings.password,
+            "selectedFolders" to settings.selectedFolders.toTypedArray()
+        )
         val syncRequest = OneTimeWorkRequestBuilder<SyncWorker>()
             .setInputData(data)
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
@@ -165,7 +213,12 @@ class MainActivity : ComponentActivity() {
 
     private fun startReconcileWorker(settings: WebDavSettings) {
         if (settings.url.isBlank()) return
-        val data = workDataOf("baseUrl" to settings.url, "user" to settings.username, "password" to settings.password)
+        val data = workDataOf(
+            "baseUrl" to settings.url,
+            "user" to settings.username,
+            "password" to settings.password,
+            "selectedFolders" to settings.selectedFolders.toTypedArray()
+        )
         val reconcileRequest = OneTimeWorkRequestBuilder<ReconcileWorker>()
             .setInputData(data)
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
@@ -175,7 +228,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun scheduleBackgroundSync(settings: WebDavSettings) {
-        val data = workDataOf("baseUrl" to settings.url, "user" to settings.username, "password" to settings.password)
+        val data = workDataOf(
+            "baseUrl" to settings.url,
+            "user" to settings.username,
+            "password" to settings.password,
+            "selectedFolders" to settings.selectedFolders.toTypedArray()
+        )
         val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).setRequiresCharging(true).build()
         val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(1, java.util.concurrent.TimeUnit.HOURS)
             .setInputData(data)
@@ -205,7 +263,8 @@ fun MainAppScreen(
     totalLibraryCount: Int,
     onStartSync: (WebDavSettings) -> Unit,
     onStopSync: () -> Unit,
-    onStartReconcile: (WebDavSettings) -> Unit
+    onStartReconcile: (WebDavSettings) -> Unit,
+    availableFolders: List<String>
 ) {
     var selectedScreen by remember { mutableStateOf<Screen>(Screen.Sync) }
     val scope = rememberCoroutineScope()
@@ -230,7 +289,7 @@ fun MainAppScreen(
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("Sync-Salabim \uD83E\uDE84") },
+                title = { Text("Photo Sync") },
                 actions = {
                     if (selectedScreen == Screen.Sync) {
                         IconButton(onClick = { AppLogger.clear() }) { Icon(Icons.Default.Delete, contentDescription = "Clear Logs") }
@@ -296,6 +355,7 @@ fun MainAppScreen(
                     SettingsTabScreen(
                         modifier = Modifier.fillMaxSize(),
                         initialSettings = settings,
+                        availableFolders = availableFolders,
                         onSave = { newSettings ->
                             Log.d(TAG, "Saving settings: URL=${newSettings.url}, User=${newSettings.username}")
                             scope.launch {
@@ -474,72 +534,108 @@ fun EntriesScreen(modifier: Modifier = Modifier, entries: List<SyncedPhoto>, onD
 fun SettingsTabScreen(
     modifier: Modifier = Modifier,
     initialSettings: WebDavSettings,
+    availableFolders: List<String>,
     onSave: (WebDavSettings) -> Unit
 ) {
     var url by remember(initialSettings.url) { mutableStateOf(initialSettings.url) }
     var user by remember(initialSettings.username) { mutableStateOf(initialSettings.username) }
     var pass by remember(initialSettings.password) { mutableStateOf(initialSettings.password) }
     var backgroundSync by remember(initialSettings.backgroundSync) { mutableStateOf(initialSettings.backgroundSync) }
+    var selectedFolders by remember(initialSettings.selectedFolders) { mutableStateOf(initialSettings.selectedFolders) }
     
     val keyboardController = LocalSoftwareKeyboardController.current
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp),
+    LazyColumn(
+        modifier = modifier.padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        OutlinedTextField(
-            value = url,
-            onValueChange = { url = it },
-            label = { Text("WebDAV URL") },
-            placeholder = { Text("https://dav.example.com/photos") },
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        OutlinedTextField(
-            value = user,
-            onValueChange = { user = it },
-            label = { Text("Username") },
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        OutlinedTextField(
-            value = pass,
-            onValueChange = { pass = it },
-            label = { Text("Password") },
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Background Sync", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    "Sync photos automatically when charging and connected to Wi-Fi",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Switch(
-                checked = backgroundSync,
-                onCheckedChange = { backgroundSync = it }
+        item {
+            OutlinedTextField(
+                value = url,
+                onValueChange = { url = it },
+                label = { Text("WebDAV URL") },
+                placeholder = { Text("https://dav.example.com/photos") },
+                modifier = Modifier.fillMaxWidth()
             )
         }
 
-        Button(
-            onClick = { 
-                keyboardController?.hide()
-                onSave(WebDavSettings(url, user, pass, backgroundSync)) 
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Save Settings")
+        item {
+            OutlinedTextField(
+                value = user,
+                onValueChange = { user = it },
+                label = { Text("Username") },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        item {
+            OutlinedTextField(
+                value = pass,
+                onValueChange = { pass = it },
+                label = { Text("Password") },
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Background Sync", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Sync photos automatically when charging and connected to Wi-Fi",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = backgroundSync,
+                    onCheckedChange = { backgroundSync = it }
+                )
+            }
+        }
+
+        item {
+            Text("Sync Folders", style = MaterialTheme.typography.titleMedium)
+            Text("If none selected, all folders will be synced.", style = MaterialTheme.typography.bodySmall)
+        }
+
+        items(availableFolders) { folder ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        selectedFolders = if (selectedFolders.contains(folder)) {
+                            selectedFolders - folder
+                        } else {
+                            selectedFolders + folder
+                        }
+                    },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(
+                    checked = selectedFolders.contains(folder),
+                    onCheckedChange = null // Handled by row clickable
+                )
+                Text(folder, modifier = Modifier.padding(start = 8.dp))
+            }
+        }
+
+        item {
+            Button(
+                onClick = { 
+                    keyboardController?.hide()
+                    onSave(WebDavSettings(url, user, pass, backgroundSync, selectedFolders)) 
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Save Settings")
+            }
         }
     }
 }

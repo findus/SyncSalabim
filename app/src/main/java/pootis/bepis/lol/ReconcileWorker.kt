@@ -27,6 +27,7 @@ class ReconcileWorker(appContext: Context, workerParams: WorkerParameters) :
         val password = inputData.getString("password") ?: return Result.failure()
         val auth = Credentials.basic(user, password)
         val baseUrl = baseUrlStr.toHttpUrl()
+        val selectedFolders = inputData.getStringArray("selectedFolders")?.toSet() ?: emptySet()
 
         try {
             // 1. Delete all entries in local database
@@ -34,7 +35,7 @@ class ReconcileWorker(appContext: Context, workerParams: WorkerParameters) :
             log("Local sync cache cleared.")
 
             // 2. Get all local media files
-            val allLocalItems = getAllLocalMedia()
+            val allLocalItems = getAllLocalMedia(selectedFolders)
             val total = allLocalItems.size
             log("Found $total local media files to verify.")
 

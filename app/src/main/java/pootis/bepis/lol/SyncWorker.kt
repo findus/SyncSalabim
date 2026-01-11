@@ -31,12 +31,13 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
         val baseUrlStr = inputData.getString("baseUrl")?.removeSuffix("/") ?: return Result.failure()
         val user = inputData.getString("user") ?: return Result.failure()
         val password = inputData.getString("password") ?: return Result.failure()
+        val selectedFolders = inputData.getStringArray("selectedFolders")?.toSet() ?: emptySet()
 
         val basicAuth = Credentials.basic(user, password)
         val baseUrl = baseUrlStr.toHttpUrl()
 
         try {
-            val allLocalItems = getAllLocalMedia()
+            val allLocalItems = getAllLocalMedia(selectedFolders)
             val itemsToSync = allLocalItems.filter { !db.photoDao().isSynced(it.id) }
 
             val total = itemsToSync.size

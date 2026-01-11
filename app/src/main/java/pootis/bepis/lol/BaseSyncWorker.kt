@@ -101,27 +101,40 @@ abstract class BaseSyncWorker(appContext: Context, workerParams: WorkerParameter
         notificationManager.notify(notificationId + 100, builder.build())
     }
 
-    protected suspend fun getAllLocalMedia(): List<MediaItem> {
+    protected suspend fun getAllLocalMedia(selectedFolders: Set<String>): List<MediaItem> {
         val items = mutableListOf<MediaItem>()
-        items.addAll(queryMedia(MediaStore.Images.Media.EXTERNAL_CONTENT_URI))
-        items.addAll(queryMedia(MediaStore.Video.Media.EXTERNAL_CONTENT_URI))
+        items.addAll(queryMedia(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, selectedFolders))
+        items.addAll(queryMedia(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, selectedFolders))
         return items
     }
 
-    private fun queryMedia(collection: Uri): List<MediaItem> {
+    private fun queryMedia(collection: Uri, selectedFolders: Set<String>): List<MediaItem> {
         val items = mutableListOf<MediaItem>()
         val projection = arrayOf(
             MediaStore.MediaColumns._ID,
             MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.DATE_TAKEN,
-            MediaStore.MediaColumns.MIME_TYPE
+            MediaStore.MediaColumns.MIME_TYPE,
+            MediaStore.MediaColumns.BUCKET_DISPLAY_NAME
         )
+
+        val selection = if (selectedFolders.isNotEmpty()) {
+            val placeholders = selectedFolders.joinToString(",") { "?" }
+            "${MediaStore.MediaColumns.BUCKET_DISPLAY_NAME} IN ($placeholders)"
+        } else {
+            null
+        }
+        val selectionArgs = if (selectedFolders.isNotEmpty()) {
+            selectedFolders.toTypedArray()
+        } else {
+            null
+        }
 
         applicationContext.contentResolver.query(
             collection,
             projection,
-            null,
-            null,
+            selection,
+            selectionArgs,
             "${MediaStore.MediaColumns.DATE_TAKEN} DESC"
         )?.use { cursor ->
             val idColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)

@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -18,6 +19,7 @@ class SettingsRepository(private val context: Context) {
         val USERNAME = stringPreferencesKey("username")
         val PASSWORD = stringPreferencesKey("password")
         val BACKGROUND_SYNC = booleanPreferencesKey("background_sync")
+        val SELECTED_FOLDERS = stringSetPreferencesKey("selected_folders")
     }
 
     val settingsFlow: Flow<WebDavSettings> = context.dataStore.data.map { preferences ->
@@ -25,7 +27,8 @@ class SettingsRepository(private val context: Context) {
             url = preferences[WEBDAV_URL] ?: "",
             username = preferences[USERNAME] ?: "",
             password = preferences[PASSWORD] ?: "",
-            backgroundSync = preferences[BACKGROUND_SYNC] ?: false
+            backgroundSync = preferences[BACKGROUND_SYNC] ?: false,
+            selectedFolders = preferences[SELECTED_FOLDERS] ?: emptySet()
         )
     }
 
@@ -35,6 +38,7 @@ class SettingsRepository(private val context: Context) {
             preferences[USERNAME] = settings.username
             preferences[PASSWORD] = settings.password
             preferences[BACKGROUND_SYNC] = settings.backgroundSync
+            preferences[SELECTED_FOLDERS] = settings.selectedFolders
         }
     }
 }
@@ -43,5 +47,6 @@ data class WebDavSettings(
     val url: String,
     val username: String,
     val password: String,
-    val backgroundSync: Boolean = false
+    val backgroundSync: Boolean = false,
+    val selectedFolders: Set<String> = emptySet()
 )
