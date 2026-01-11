@@ -22,6 +22,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
@@ -256,6 +257,15 @@ fun MainAppScreen(
         }
     ) { innerPadding ->
         Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
+            // Global Progress Bar - fades in on top
+            AnimatedVisibility(
+                visible = isSyncing,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                SyncProgressSection(progress, current, total, currentFileName, onStopSync)
+            }
+
             when (selectedScreen) {
                 Screen.Sync -> {
                     MainSyncContent(
@@ -267,19 +277,12 @@ fun MainAppScreen(
                         onStartSync = { onStartSync(settings) }
                     )
                     
-                    if (isSyncing) {
-                        SyncProgressSection(progress, current, total, currentFileName, onStopSync)
-                    }
-
                     LogConsole(
                         modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black),
                         logs = logs
                     )
                 }
                 Screen.Entries -> {
-                    if (isSyncing) {
-                        SyncProgressSection(progress, current, total, currentFileName, onStopSync)
-                    }
                     EntriesScreen(
                         modifier = Modifier.weight(1f),
                         entries = syncedEntries,
@@ -302,7 +305,6 @@ fun MainAppScreen(
                                     if (urlChanged && newSettings.url.isNotBlank()) {
                                         onStartReconcile(newSettings)
                                     }
-
                                 } catch (e: Exception) {
                                     Log.e(TAG, "Failed to save settings", e)
                                     AppLogger.log("ERROR: Failed to save settings")
@@ -427,8 +429,7 @@ fun EntriesScreen(modifier: Modifier = Modifier, entries: List<SyncedPhoto>, onD
                                 text = entry.fileName,
                                 modifier = Modifier.weight(1f),
                                 style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                maxLines = 1, overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 text = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(entry.timestamp)),
@@ -439,7 +440,7 @@ fun EntriesScreen(modifier: Modifier = Modifier, entries: List<SyncedPhoto>, onD
                             IconButton(onClick = {
                                 scope.launch {
                                     itemsToDelete = itemsToDelete + entry.id
-                                    delay(300) // Give time for the animation to play
+                                    delay(300) // Match the exit animation duration
                                     onDelete(entry)
                                 }
                             }) {
