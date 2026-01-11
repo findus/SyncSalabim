@@ -6,7 +6,6 @@ import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
 import android.database.ContentObserver
 import android.os.Build
 import android.os.Bundle
@@ -37,7 +36,6 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -63,9 +61,9 @@ import pootis.bepis.lol.ui.theme.LolsyncTheme
 import java.text.SimpleDateFormat
 import java.util.*
 
-private const val SYNC_WORK_NAME = "UnifiedPhotoSync"
-private const val RECONCILE_WORK_NAME = "ReconcileDatabase"
-private const val BACKGROUND_WORK_NAME = "BackgroundPhotoSync"
+private const val FOREGROUND_SYNC_TASK = "UnifiedPhotoSync"
+private const val REBUILD_DB_SYNC_TASK = "ReconcileDatabase"
+private const val BACKGROUND_SYNC_TASK = "BackgroundPhotoSync"
 private const val TAG = "MainActivity"
 
 class MainActivity : ComponentActivity() {
@@ -114,7 +112,7 @@ class MainActivity : ComponentActivity() {
                 if (settings.url.isNotBlank() && settings.backgroundSync) {
                     scheduleBackgroundSync(settings)
                 } else {
-                    WorkManager.getInstance(applicationContext).cancelUniqueWork(BACKGROUND_WORK_NAME)
+                    WorkManager.getInstance(applicationContext).cancelUniqueWork(BACKGROUND_SYNC_TASK)
                 }
                 // Trigger library count update whenever settings (including folder selection) change
                 updateLibraryCount(settings.selectedFolders)
@@ -200,9 +198,9 @@ class MainActivity : ComponentActivity() {
     private fun isAnySyncRunning(): Boolean {
         val wm = WorkManager.getInstance(applicationContext)
         val statuses = listOf(
-            wm.getWorkInfosForUniqueWork(SYNC_WORK_NAME).get(),
-            wm.getWorkInfosForUniqueWork(RECONCILE_WORK_NAME).get(),
-            wm.getWorkInfosForUniqueWork(BACKGROUND_WORK_NAME).get()
+            wm.getWorkInfosForUniqueWork(FOREGROUND_SYNC_TASK).get(),
+            wm.getWorkInfosForUniqueWork(REBUILD_DB_SYNC_TASK).get(),
+            wm.getWorkInfosForUniqueWork(BACKGROUND_SYNC_TASK).get()
         )
         return statuses.flatten().any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
     }
@@ -225,7 +223,7 @@ class MainActivity : ComponentActivity() {
             .setInputData(data)
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .build()
-        WorkManager.getInstance(applicationContext).enqueueUniqueWork(SYNC_WORK_NAME, ExistingWorkPolicy.KEEP, syncRequest)
+        WorkManager.getInstance(applicationContext).enqueueUniqueWork(FOREGROUND_SYNC_TASK, ExistingWorkPolicy.KEEP, syncRequest)
         AppLogger.log("Sync requested")
     }
 
@@ -247,7 +245,7 @@ class MainActivity : ComponentActivity() {
             .setInputData(data)
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .build()
-        WorkManager.getInstance(applicationContext).enqueueUniqueWork(RECONCILE_WORK_NAME, ExistingWorkPolicy.KEEP, reconcileRequest)
+        WorkManager.getInstance(applicationContext).enqueueUniqueWork(REBUILD_DB_SYNC_TASK, ExistingWorkPolicy.KEEP, reconcileRequest)
         AppLogger.log("Reconciliation requested")
     }
 
@@ -263,13 +261,13 @@ class MainActivity : ComponentActivity() {
             .setInputData(data)
             .setConstraints(constraints)
             .build()
-        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(BACKGROUND_WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, syncRequest)
+        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(BACKGROUND_SYNC_TASK, ExistingPeriodicWorkPolicy.KEEP, syncRequest)
     }
 
     private fun stopSyncWorker() {
-        WorkManager.getInstance(applicationContext).cancelUniqueWork(SYNC_WORK_NAME)
-        WorkManager.getInstance(applicationContext).cancelUniqueWork(BACKGROUND_WORK_NAME)
-        WorkManager.getInstance(applicationContext).cancelUniqueWork(RECONCILE_WORK_NAME)
+        WorkManager.getInstance(applicationContext).cancelUniqueWork(FOREGROUND_SYNC_TASK)
+        WorkManager.getInstance(applicationContext).cancelUniqueWork(BACKGROUND_SYNC_TASK)
+        WorkManager.getInstance(applicationContext).cancelUniqueWork(REBUILD_DB_SYNC_TASK)
         AppLogger.log("Cancellation requested")
     }
 }
@@ -299,9 +297,9 @@ fun MainAppScreen(
     val syncedEntries by database.photoDao().getAllFlow().collectAsStateWithLifecycle(initialValue = emptyList())
 
     val workManager = WorkManager.getInstance(androidx.compose.ui.platform.LocalContext.current)
-    val manualWorkInfos by workManager.getWorkInfosForUniqueWorkFlow(SYNC_WORK_NAME).collectAsStateWithLifecycle(initialValue = emptyList())
-    val backgroundWorkInfos by workManager.getWorkInfosForUniqueWorkFlow(BACKGROUND_WORK_NAME).collectAsStateWithLifecycle(initialValue = emptyList())
-    val reconcileWorkInfos by workManager.getWorkInfosForUniqueWorkFlow(RECONCILE_WORK_NAME).collectAsStateWithLifecycle(initialValue = emptyList())
+    val manualWorkInfos by workManager.getWorkInfosForUniqueWorkFlow(FOREGROUND_SYNC_TASK).collectAsStateWithLifecycle(initialValue = emptyList())
+    val backgroundWorkInfos by workManager.getWorkInfosForUniqueWorkFlow(BACKGROUND_SYNC_TASK).collectAsStateWithLifecycle(initialValue = emptyList())
+    val reconcileWorkInfos by workManager.getWorkInfosForUniqueWorkFlow(REBUILD_DB_SYNC_TASK).collectAsStateWithLifecycle(initialValue = emptyList())
 
     val activeWork = (manualWorkInfos + backgroundWorkInfos + reconcileWorkInfos).firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
     val isSyncing = activeWork != null
