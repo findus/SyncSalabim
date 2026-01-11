@@ -8,7 +8,7 @@ Extremely minimal one-way-sync app to sync Photos to a Webdav-Endpoint.
 
 ## Sync Strategy
 
-- Has local Database that saves all successfully saved media files
+- Has local Database that saves all successfully transferred media files
 - Keeps data on phone after sync
 - On next sync just syncs new files
 
