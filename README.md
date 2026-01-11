@@ -15,6 +15,8 @@ Extremely minimal one-way-sync app to sync Photos to a Webdav-Endpoint.
 # TODO
 
 - Background Sync not really working as intended 
+- Now that multiple folders are supported, implement handling when images with same filename are uploaded to same folder
+  - for example: screenshots/a.jpg (shot on 1.2.2026) and photos/a.jpg (shot on 1.2.2026)
 - ~Implement Kind of "refresh" when database gets corrupted or is missing~
 
 # Why
