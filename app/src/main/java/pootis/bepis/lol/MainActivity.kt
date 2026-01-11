@@ -211,7 +211,7 @@ fun MainAppScreen(
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("Photo Sync") },
+                title = { Text("Sync-Salabim \uD83E\uDE84") },
                 actions = {
                     if (selectedScreen == Screen.Sync) {
                         IconButton(onClick = { AppLogger.clear() }) { Icon(Icons.Default.Delete, contentDescription = "Clear Logs") }
@@ -244,7 +244,7 @@ fun MainAppScreen(
                         librarySynced = syncedCount,
                         onStartSync = { onStartSync(settings) }
                     )
-                    
+
                     if (isSyncing) {
                         SyncProgressSection(progress, current, total, currentFileName, onStopSync)
                     }
