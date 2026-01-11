@@ -22,9 +22,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -46,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -283,6 +284,9 @@ fun MainAppScreen(
                     )
                 }
                 Screen.Entries -> {
+                    if (isSyncing) {
+                        SyncProgressSection(progress, current, total, currentFileName, onStopSync)
+                    }
                     EntriesScreen(
                         modifier = Modifier.weight(1f),
                         entries = syncedEntries,
@@ -465,6 +469,8 @@ fun SettingsTabScreen(
     var user by remember(initialSettings.username) { mutableStateOf(initialSettings.username) }
     var pass by remember(initialSettings.password) { mutableStateOf(initialSettings.password) }
     var backgroundSync by remember(initialSettings.backgroundSync) { mutableStateOf(initialSettings.backgroundSync) }
+    
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     Column(
         modifier = modifier
@@ -516,7 +522,10 @@ fun SettingsTabScreen(
         }
 
         Button(
-            onClick = { onSave(WebDavSettings(url, user, pass, backgroundSync)) },
+            onClick = { 
+                keyboardController?.hide()
+                onSave(WebDavSettings(url, user, pass, backgroundSync)) 
+            },
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Save Settings")
