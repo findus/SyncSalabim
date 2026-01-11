@@ -250,6 +250,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun scheduleBackgroundSync(settings: WebDavSettings) {
+
+        //TODO check if other task is running when this background task starts, generally fix it as it does not work properly rn
+
         val data = workDataOf(
             "baseUrl" to settings.url,
             "user" to settings.username,
