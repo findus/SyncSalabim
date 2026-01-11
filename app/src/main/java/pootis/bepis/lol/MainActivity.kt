@@ -284,9 +284,6 @@ fun MainAppScreen(
                     )
                 }
                 Screen.Entries -> {
-                    if (isSyncing) {
-                        SyncProgressSection(progress, current, total, currentFileName, onStopSync)
-                    }
                     EntriesScreen(
                         modifier = Modifier.weight(1f),
                         entries = syncedEntries,
