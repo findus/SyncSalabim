@@ -5,9 +5,7 @@ package pootis.bepis.lol
 import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.content.ContentResolver
 import android.content.Context
-import android.content.Intent
 import android.database.ContentObserver
 import android.os.Build
 import android.os.Bundle
@@ -289,7 +287,7 @@ fun MainAppScreen(
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("Photo Sync") },
+                title = { Text("Sync-Salabim \uD83E\uDE84") },
                 actions = {
                     if (selectedScreen == Screen.Sync) {
                         IconButton(onClick = { AppLogger.clear() }) { Icon(Icons.Default.Delete, contentDescription = "Clear Logs") }
