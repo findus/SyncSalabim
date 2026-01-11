@@ -328,6 +328,8 @@ fun MainSyncContent(
     librarySynced: Int,
     onStartSync: () -> Unit
 ) {
+    val allSynced = libraryTotal > 0 && librarySynced >= libraryTotal
+
     Column(
         modifier = modifier.fillMaxWidth().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -350,11 +352,23 @@ fun MainSyncContent(
         if (settings.url.isBlank()) {
             Text("Please configure WebDAV settings in the Settings tab.", color = MaterialTheme.colorScheme.error)
         } else {
-            Text("Ready to sync to:", style = MaterialTheme.typography.labelLarge)
-            Text(settings.url, style = MaterialTheme.typography.bodyMedium)
+            if (allSynced) {
+                Text("✨ All items are synced", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
+            } else {
+                Text("Ready to sync to:", style = MaterialTheme.typography.labelLarge)
+                Text(settings.url, style = MaterialTheme.typography.bodyMedium)
+            }
+            
             Spacer(modifier = Modifier.height(24.dp))
+            
             if (!isSyncing) {
-                Button(onClick = onStartSync, modifier = Modifier.fillMaxWidth()) { Text("Start Sync Now") }
+                Button(
+                    onClick = onStartSync, 
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !allSynced
+                ) { 
+                    Text("Start Sync Now") 
+                }
             }
         }
     }
