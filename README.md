@@ -5,7 +5,9 @@ Extremely (cringy and) minimal one-way-sync app to sync Photos to a Webdav-Endpo
 ## Sync Strategy
 
 Has local Database that saves all successfully saved media files
+
 Keeps data on phone after sync
+
 On next sync just syncs new files
 
 # TODO
