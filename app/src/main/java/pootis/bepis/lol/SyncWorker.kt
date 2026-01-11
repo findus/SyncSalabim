@@ -1,83 +1,43 @@
 package pootis.bepis.lol
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.Context
-import android.content.pm.ServiceInfo
 import android.net.Uri
-import android.os.Build
-import android.provider.MediaStore
-import android.util.Log
-import androidx.core.app.NotificationCompat
-import androidx.work.CoroutineWorker
-import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import okhttp3.Credentials
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.logging.HttpLoggingInterceptor
 import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.*
 
-private const val TAG = "SyncWorker"
-private const val CHANNEL_ID = "sync_notification_channel"
-private const val NOTIFICATION_ID = 1
-
 class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
-    CoroutineWorker(appContext, workerParams) {
+    BaseSyncWorker(appContext, workerParams) {
 
-    private val db = SyncDatabase.getDatabase(appContext)
-    private val notificationManager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-    private val client = OkHttpClient.Builder()
-        .build()
-
-    private fun log(message: String, error: Throwable? = null) {
-        if (error != null) {
-            Log.e(TAG, message, error)
-            AppLogger.log("ERROR: $message - ${error.message}")
-        } else {
-            Log.d(TAG, message)
-            AppLogger.log(message)
-        }
-    }
+    override val tag = "SyncWorker"
+    override val notificationId = 1
 
     override suspend fun doWork(): Result {
         log("Starting sync worker...")
         
         createNotificationChannel()
-        // Start as foreground service to ensure it keeps running and show initial notification
         try {
-            setForeground(createForegroundInfo(0, 0, "Initializing..."))
+            setForeground(createForegroundInfo(0, 0, "Initializing sync...", "Syncing Photos"))
         } catch (e: Exception) {
             log("Failed to set foreground info", e)
         }
 
-        val baseUrlStr = inputData.getString("baseUrl")?.removeSuffix("/") ?: run {
-            log("Sync failed: Missing baseUrl")
-            return Result.failure()
-        }
-        val user = inputData.getString("user") ?: run {
-            log("Sync failed: Missing user")
-            return Result.failure()
-        }
-        val password = inputData.getString("password") ?: run {
-            log("Sync failed: Missing password")
-            return Result.failure()
-        }
+        val baseUrlStr = inputData.getString("baseUrl")?.removeSuffix("/") ?: return Result.failure()
+        val user = inputData.getString("user") ?: return Result.failure()
+        val password = inputData.getString("password") ?: return Result.failure()
 
         val basicAuth = Credentials.basic(user, password)
         val baseUrl = baseUrlStr.toHttpUrl()
 
         try {
-            val itemsToSync = mutableListOf<MediaItem>()
-            itemsToSync.addAll(getPendingItems(MediaStore.Images.Media.EXTERNAL_CONTENT_URI))
-            itemsToSync.addAll(getPendingItems(MediaStore.Video.Media.EXTERNAL_CONTENT_URI))
+            val allLocalItems = getAllLocalMedia()
+            val itemsToSync = allLocalItems.filter { !db.photoDao().isSynced(it.id) }
 
             val total = itemsToSync.size
             log("Total items to sync: $total")
@@ -88,7 +48,7 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
                 return Result.success()
             }
 
-            // Step 1: Pre-create all required folders
+            // Step 1: Pre-create folders
             log("Pre-creating folder structure...")
             val requiredPaths = itemsToSync.map { item ->
                 val date = Date(if (item.dateTaken > 0) item.dateTaken else System.currentTimeMillis())
@@ -97,12 +57,8 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
                 year to month
             }.distinct()
 
-            val createdYears = mutableSetOf<String>()
             for ((year, month) in requiredPaths) {
-                if (year !in createdYears) {
-                    createDirectory(baseUrl.toString(), year, basicAuth)
-                    createdYears.add(year)
-                }
+                createDirectory(baseUrl.toString(), year, basicAuth)
                 createDirectory("$baseUrl/$year", month, basicAuth)
             }
 
@@ -110,20 +66,11 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
             var successCount = 0
             for ((index, item) in itemsToSync.withIndex()) {
                 val current = index + 1
-                val progress = index.toFloat() / total
+                val progressValue = index.toFloat() / total
                 
                 log("Uploading ($current/$total): ${item.name}")
-
-                // Update Progress Data for UI
-                setProgress(workDataOf(
-                    "progress" to progress,
-                    "current" to current,
-                    "total" to total,
-                    "name" to item.name
-                ))
-                
-                // Update Foreground Notification with progress bar
-                updateProgressNotification(current, total, item.name)
+                setProgress(workDataOf("progress" to progressValue, "current" to current, "total" to total, "name" to item.name))
+                updateProgressNotification(current, total, item.name, "Syncing Photos")
 
                 if (uploadMedia(item, baseUrl, basicAuth)) {
                     db.photoDao().insert(SyncedPhoto(item.id, item.name, System.currentTimeMillis()))
@@ -134,9 +81,7 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
                 }
             }
 
-            // Final Progress update
             setProgress(workDataOf("progress" to 1f, "current" to total, "total" to total, "name" to "Done"))
-            
             log("Sync completed successfully. Synced $successCount items.")
             showFinishedNotification("Sync Finished", "Successfully synced $successCount items.")
             
@@ -148,118 +93,18 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
         }
     }
 
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Photo Sync Status",
-                NotificationManager.IMPORTANCE_LOW // Use LOW so it doesn't make noise on every update
-            )
-            notificationManager.createNotificationChannel(channel)
-        }
-    }
-
-    private fun createForegroundInfo(current: Int, total: Int, fileName: String): ForegroundInfo {
-        val title = if (total > 0) "Syncing Photos ($current/$total)" else "Starting Sync..."
-        
-        val builder = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setContentTitle(title)
-            .setContentText(fileName)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true) // Don't buzz on every update
-
-        if (total > 0) {
-            builder.setProgress(total, current, false)
-        } else {
-            builder.setProgress(0, 0, true) // Indeterminate
-        }
-
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ForegroundInfo(NOTIFICATION_ID, builder.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            ForegroundInfo(NOTIFICATION_ID, builder.build())
-        }
-    }
-
-    private suspend fun updateProgressNotification(current: Int, total: Int, fileName: String) {
-        try {
-            setForeground(createForegroundInfo(current, total, fileName))
-        } catch (e: Exception) {
-            log("Failed to update foreground notification", e)
-        }
-    }
-
-    private fun showFinishedNotification(title: String, message: String) {
-        // Use a different notification for finished state so it's not ongoing
-        val builder = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setContentTitle(title)
-            .setContentText(message)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setAutoCancel(true)
-            .setProgress(0, 0, false) // Remove progress bar
-
-        notificationManager.notify(NOTIFICATION_ID + 1, builder.build())
-    }
-
-    private suspend fun getPendingItems(collection: Uri): List<MediaItem> {
-        val pending = mutableListOf<MediaItem>()
-        val projection = arrayOf(
-            MediaStore.MediaColumns._ID,
-            MediaStore.MediaColumns.DISPLAY_NAME,
-            MediaStore.MediaColumns.DATE_TAKEN,
-            MediaStore.MediaColumns.MIME_TYPE
-        )
-
-        applicationContext.contentResolver.query(
-            collection,
-            projection,
-            null,
-            null,
-            "${MediaStore.MediaColumns.DATE_TAKEN} DESC"
-        )?.use { cursor ->
-            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
-            val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
-            val dateColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_TAKEN)
-            val mimeColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
-
-            while (cursor.moveToNext()) {
-                val id = cursor.getLong(idColumn)
-                if (!db.photoDao().isSynced(id)) {
-                    pending.add(MediaItem(
-                        id = id,
-                        name = cursor.getString(nameColumn),
-                        dateTaken = cursor.getLong(dateColumn),
-                        mimeType = cursor.getString(mimeColumn),
-                        collection = collection
-                    ))
-                }
-            }
-        }
-        return pending
-    }
-
     private fun uploadMedia(item: MediaItem, baseUrl: okhttp3.HttpUrl, basicAuth: String): Boolean {
-        val date = Date(if (item.dateTaken > 0) item.dateTaken else System.currentTimeMillis())
-        val year = SimpleDateFormat("yyyy", Locale.US).format(date)
-        val month = SimpleDateFormat("MM", Locale.US).format(date)
-
-        val targetUrl = baseUrl.newBuilder()
-            .addPathSegment(year)
-            .addPathSegment(month)
-            .addPathSegment(item.name)
-            .build()
+        val targetUrl = getRemoteUrl(item, baseUrl)
+        val uri = Uri.withAppendedPath(item.collection, item.id.toString())
 
         return try {
-            val uri = Uri.withAppendedPath(item.collection, item.id.toString())
             val inputStream: InputStream? = applicationContext.contentResolver.openInputStream(uri)
             val bytes = inputStream?.readBytes() ?: run {
                 log("Could not read bytes for ${item.name}")
                 return false
             }
 
-            val request = Request.Builder()
+            val request = okhttp3.Request.Builder()
                 .url(targetUrl)
                 .put(bytes.toRequestBody(item.mimeType?.toMediaTypeOrNull()))
                 .addHeader("Authorization", basicAuth)
@@ -268,36 +113,9 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
             client.newCall(request).execute().use { response ->
                 response.isSuccessful || response.code == 201 || response.code == 204
             }
-
         } catch (e: Exception) {
             log("Exception during upload of ${item.name}", e)
             false
         }
     }
-
-    private fun createDirectory(parentUrl: String, dirName: String, auth: String) {
-        val url = "$parentUrl/$dirName"
-        val request = Request.Builder()
-            .url(url)
-            .method("MKCOL", null)
-            .addHeader("Authorization", auth)
-            .build()
-        try {
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    log("Created directory: $url")
-                }
-            }
-        } catch (e: Exception) {
-            Log.v(TAG, "MKCOL failed for $url: ${e.message}")
-        }
-    }
-
-    data class MediaItem(
-        val id: Long,
-        val name: String,
-        val dateTaken: Long,
-        val mimeType: String?,
-        val collection: Uri
-    )
 }
