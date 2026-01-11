@@ -3,12 +3,14 @@ package pootis.bepis.lol
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
+import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import okhttp3.Credentials
@@ -24,11 +26,13 @@ import java.util.*
 
 private const val TAG = "SyncWorker"
 private const val CHANNEL_ID = "sync_notification_channel"
+private const val NOTIFICATION_ID = 1
 
 class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
     CoroutineWorker(appContext, workerParams) {
 
     private val db = SyncDatabase.getDatabase(appContext)
+    private val notificationManager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
     private val client = OkHttpClient.Builder()
         .build()
@@ -45,6 +49,15 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
 
     override suspend fun doWork(): Result {
         log("Starting sync worker...")
+        
+        createNotificationChannel()
+        // Start as foreground service to ensure it keeps running and show initial notification
+        try {
+            setForeground(createForegroundInfo(0, 0, "Initializing..."))
+        } catch (e: Exception) {
+            log("Failed to set foreground info", e)
+        }
+
         val baseUrlStr = inputData.getString("baseUrl")?.removeSuffix("/") ?: run {
             log("Sync failed: Missing baseUrl")
             return Result.failure()
@@ -71,7 +84,7 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
 
             if (total == 0) {
                 setProgress(workDataOf("progress" to 1f, "current" to 0, "total" to 0, "name" to "Done"))
-                showNotification("Sync Finished", "Everything is up to date.")
+                showFinishedNotification("Sync Finished", "Everything is up to date.")
                 return Result.success()
             }
 
@@ -97,14 +110,20 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
             var successCount = 0
             for ((index, item) in itemsToSync.withIndex()) {
                 val current = index + 1
+                val progress = index.toFloat() / total
+                
                 log("Uploading ($current/$total): ${item.name}")
 
+                // Update Progress Data for UI
                 setProgress(workDataOf(
-                    "progress" to (index.toFloat() / total),
+                    "progress" to progress,
                     "current" to current,
                     "total" to total,
                     "name" to item.name
                 ))
+                
+                // Update Foreground Notification with progress bar
+                updateProgressNotification(current, total, item.name)
 
                 if (uploadMedia(item, baseUrl, basicAuth)) {
                     db.photoDao().insert(SyncedPhoto(item.id, item.name, System.currentTimeMillis()))
@@ -115,45 +134,73 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
                 }
             }
 
-            // Ensure we hit exactly 100% and show "Done" at the very end
-            setProgress(workDataOf(
-                "progress" to 1f,
-                "current" to total,
-                "total" to total,
-                "name" to "Done"
-            ))
-
+            // Final Progress update
+            setProgress(workDataOf("progress" to 1f, "current" to total, "total" to total, "name" to "Done"))
+            
             log("Sync completed successfully. Synced $successCount items.")
-            showNotification("Sync Finished", "Successfully synced $successCount items.")
+            showFinishedNotification("Sync Finished", "Successfully synced $successCount items.")
             
             return Result.success()
         } catch (e: Exception) {
             log("Sync failed with exception", e)
-            showNotification("Sync Failed", e.message ?: "An unexpected error occurred.")
+            showFinishedNotification("Sync Failed", e.message ?: "An unexpected error occurred.")
             return Result.retry()
         }
     }
 
-    private fun showNotification(title: String, message: String) {
-        val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        
+    private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Sync Status",
-                NotificationManager.IMPORTANCE_DEFAULT
+                "Photo Sync Status",
+                NotificationManager.IMPORTANCE_LOW // Use LOW so it doesn't make noise on every update
             )
             notificationManager.createNotificationChannel(channel)
         }
+    }
 
+    private fun createForegroundInfo(current: Int, total: Int, fileName: String): ForegroundInfo {
+        val title = if (total > 0) "Syncing Photos ($current/$total)" else "Starting Sync..."
+        
+        val builder = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentTitle(title)
+            .setContentText(fileName)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true) // Don't buzz on every update
+
+        if (total > 0) {
+            builder.setProgress(total, current, false)
+        } else {
+            builder.setProgress(0, 0, true) // Indeterminate
+        }
+
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(NOTIFICATION_ID, builder.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            ForegroundInfo(NOTIFICATION_ID, builder.build())
+        }
+    }
+
+    private suspend fun updateProgressNotification(current: Int, total: Int, fileName: String) {
+        try {
+            setForeground(createForegroundInfo(current, total, fileName))
+        } catch (e: Exception) {
+            log("Failed to update foreground notification", e)
+        }
+    }
+
+    private fun showFinishedNotification(title: String, message: String) {
+        // Use a different notification for finished state so it's not ongoing
         val builder = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentTitle(title)
             .setContentText(message)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
+            .setProgress(0, 0, false) // Remove progress bar
 
-        notificationManager.notify(System.currentTimeMillis().toInt(), builder.build())
+        notificationManager.notify(NOTIFICATION_ID + 1, builder.build())
     }
 
     private suspend fun getPendingItems(collection: Uri): List<MediaItem> {
