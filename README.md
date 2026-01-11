@@ -21,7 +21,7 @@ Extremely minimal one-way-sync app to sync Photos to a Webdav-Endpoint.
 
 # Why
 
-Seems like I have a strange workflow to save media form my phone to nextcloud, and there was no (free) app that had this functionality.
+Seems like I have a strange workflow to save media from my phone to nextcloud, and there was no (free) app that had this functionality.
 
 I am an experienced iOS Developer, but have no experience in Android-Dev, a lot of code is generated.
 
