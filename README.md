@@ -27,4 +27,4 @@ I am an experienced iOS Developer, but have no experience in Android-Dev, a lot 
 
 # Why the name
 
-Was the name an llm could spit out regarding cringe/creativity ratio
+Was the name an llm could spit out that was best regarding cringe/creativity ratio
