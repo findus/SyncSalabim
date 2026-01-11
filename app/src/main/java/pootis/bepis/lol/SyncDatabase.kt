@@ -27,6 +27,9 @@ interface PhotoDao {
 
     @Delete
     suspend fun delete(photo: SyncedPhoto)
+
+    @Query("DELETE FROM synced_photos")
+    suspend fun deleteAll()
 }
 
 @Database(entities = [SyncedPhoto::class], version = 1)

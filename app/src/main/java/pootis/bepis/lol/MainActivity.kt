@@ -35,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
@@ -61,6 +62,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 private const val SYNC_WORK_NAME = "UnifiedPhotoSync"
+private const val RECONCILE_WORK_NAME = "ReconcileDatabase"
 private const val TAG = "MainActivity"
 
 class MainActivity : ComponentActivity() {
@@ -121,7 +123,8 @@ class MainActivity : ComponentActivity() {
                     database = database,
                     totalLibraryCount = totalLibraryCount,
                     onStartSync = { startSyncWorker(it) },
-                    onStopSync = { stopSyncWorker() }
+                    onStopSync = { stopSyncWorker() },
+                    onStartReconcile = { startReconcileWorker(it) }
                 )
             }
         }
@@ -158,6 +161,17 @@ class MainActivity : ComponentActivity() {
         AppLogger.log("Sync requested")
     }
 
+    private fun startReconcileWorker(settings: WebDavSettings) {
+        if (settings.url.isBlank()) return
+        val data = workDataOf("baseUrl" to settings.url, "user" to settings.username, "password" to settings.password)
+        val reconcileRequest = OneTimeWorkRequestBuilder<ReconcileWorker>()
+            .setInputData(data)
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .build()
+        WorkManager.getInstance(applicationContext).enqueueUniqueWork(RECONCILE_WORK_NAME, ExistingWorkPolicy.KEEP, reconcileRequest)
+        AppLogger.log("Reconciliation requested")
+    }
+
     private fun scheduleBackgroundSync(settings: WebDavSettings) {
         val data = workDataOf("baseUrl" to settings.url, "user" to settings.username, "password" to settings.password)
         val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).setRequiresCharging(true).build()
@@ -171,12 +185,13 @@ class MainActivity : ComponentActivity() {
     private fun stopSyncWorker() {
         WorkManager.getInstance(applicationContext).cancelUniqueWork(SYNC_WORK_NAME)
         WorkManager.getInstance(applicationContext).cancelUniqueWork("BackgroundPhotoSync")
-        AppLogger.log("Sync cancellation requested")
+        WorkManager.getInstance(applicationContext).cancelUniqueWork(RECONCILE_WORK_NAME)
+        AppLogger.log("Cancellation requested")
     }
 }
 
 sealed class Screen(val title: String, val icon: ImageVector) {
-    data object Sync : Screen("Sync", Icons.Default.Sync)
+    data object Sync : Screen("Sync", Icons.Default.Build)
     data object Entries : Screen("Entries", Icons.AutoMirrored.Filled.List)
     data object Settings : Screen("Settings", Icons.Default.Settings)
 }
@@ -187,7 +202,8 @@ fun MainAppScreen(
     database: SyncDatabase,
     totalLibraryCount: Int,
     onStartSync: (WebDavSettings) -> Unit,
-    onStopSync: () -> Unit
+    onStopSync: () -> Unit,
+    onStartReconcile: (WebDavSettings) -> Unit
 ) {
     var selectedScreen by remember { mutableStateOf<Screen>(Screen.Sync) }
     val scope = rememberCoroutineScope()
@@ -200,8 +216,9 @@ fun MainAppScreen(
     val workManager = WorkManager.getInstance(androidx.compose.ui.platform.LocalContext.current)
     val manualWorkInfos by workManager.getWorkInfosForUniqueWorkFlow(SYNC_WORK_NAME).collectAsStateWithLifecycle(initialValue = emptyList())
     val backgroundWorkInfos by workManager.getWorkInfosForUniqueWorkFlow("BackgroundPhotoSync").collectAsStateWithLifecycle(initialValue = emptyList())
+    val reconcileWorkInfos by workManager.getWorkInfosForUniqueWorkFlow(RECONCILE_WORK_NAME).collectAsStateWithLifecycle(initialValue = emptyList())
 
-    val activeWork = (manualWorkInfos + backgroundWorkInfos).firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+    val activeWork = (manualWorkInfos + backgroundWorkInfos + reconcileWorkInfos).firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
     val isSyncing = activeWork != null
     val progress = activeWork?.progress?.getFloat("progress", -1f) ?: -1f
     val current = activeWork?.progress?.getInt("current", 0) ?: 0
@@ -215,6 +232,11 @@ fun MainAppScreen(
                 actions = {
                     if (selectedScreen == Screen.Sync) {
                         IconButton(onClick = { AppLogger.clear() }) { Icon(Icons.Default.Delete, contentDescription = "Clear Logs") }
+                    }
+                    if (selectedScreen == Screen.Entries) {
+                        IconButton(onClick = { onStartReconcile(settings) }, enabled = !isSyncing) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Reconcile Database")
+                        }
                     }
                 }
             )
@@ -244,7 +266,7 @@ fun MainAppScreen(
                         librarySynced = syncedCount,
                         onStartSync = { onStartSync(settings) }
                     )
-
+                    
                     if (isSyncing) {
                         SyncProgressSection(progress, current, total, currentFileName, onStopSync)
                     }
@@ -255,8 +277,11 @@ fun MainAppScreen(
                     )
                 }
                 Screen.Entries -> {
+                    if (isSyncing) {
+                        SyncProgressSection(progress, current, total, currentFileName, onStopSync)
+                    }
                     EntriesScreen(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.weight(1f),
                         entries = syncedEntries,
                         onDelete = { entry ->
                             scope.launch { database.photoDao().delete(entry) }
