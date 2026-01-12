@@ -6,6 +6,7 @@ import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.database.ContentObserver
 import android.os.Build
 import android.os.Bundle
@@ -18,11 +19,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -36,6 +34,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -114,7 +113,6 @@ class MainActivity : ComponentActivity() {
                 } else {
                     WorkManager.getInstance(applicationContext).cancelUniqueWork(BACKGROUND_SYNC_TASK)
                 }
-                // Trigger library count update whenever settings (including folder selection) change
                 updateLibraryCount(settings.selectedFolders)
             }
         }
@@ -142,7 +140,6 @@ class MainActivity : ComponentActivity() {
     private fun updateLibraryCount(selectedFolders: Set<String>? = null) {
         lifecycleScope.launch {
             val folders = selectedFolders ?: settingsRepository.settingsFlow.first().selectedFolders
-            
             val projection = arrayOf(MediaStore.MediaColumns._ID)
             var count = 0
             
@@ -158,7 +155,6 @@ class MainActivity : ComponentActivity() {
                 } else {
                     null
                 }
-                
                 contentResolver.query(uri, projection, selection, selectionArgs, null)?.use { count += it.count }
             }
             
@@ -175,7 +171,6 @@ class MainActivity : ComponentActivity() {
     private fun getAvailableFolders(): List<String> {
         val folders = mutableSetOf<String>()
         val projection = arrayOf(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
-        
         fun query(uri: android.net.Uri) {
             contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
                 val bucketColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
@@ -184,14 +179,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        
         try {
             query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
             query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        
         return folders.toList().sorted()
     }
 
@@ -208,11 +201,9 @@ class MainActivity : ComponentActivity() {
     private fun startSyncWorker(settings: WebDavSettings) {
         if (settings.url.isBlank()) return
         if (isAnySyncRunning()) {
-            AppLogger.log("Sync skipped: another task is already running")
             Toast.makeText(this, "A task is already running", Toast.LENGTH_SHORT).show()
             return
         }
-        
         val data = workDataOf(
             "baseUrl" to settings.url,
             "user" to settings.username,
@@ -230,11 +221,9 @@ class MainActivity : ComponentActivity() {
     private fun startReconcileWorker(settings: WebDavSettings) {
         if (settings.url.isBlank()) return
         if (isAnySyncRunning()) {
-            AppLogger.log("Reconciliation skipped: another task is already running")
             Toast.makeText(this, "A task is already running", Toast.LENGTH_SHORT).show()
             return
         }
-
         val data = workDataOf(
             "baseUrl" to settings.url,
             "user" to settings.username,
@@ -250,9 +239,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun scheduleBackgroundSync(settings: WebDavSettings) {
-
-        //TODO check if other task is running when this background task starts, generally fix it as it does not work properly rn
-
         val data = workDataOf(
             "baseUrl" to settings.url,
             "user" to settings.username,
@@ -341,12 +327,11 @@ fun MainAppScreen(
             }
         }
     ) { innerPadding ->
-        Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-            // Global Progress Bar - fades in on top
+        Column(modifier = Modifier.padding(innerPadding).fillMaxSize().animateContentSize()) {
             AnimatedVisibility(
                 visible = isSyncing,
-                enter = fadeIn(),
-                exit = fadeOut()
+                enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
             ) {
                 SyncProgressSection(progress, current, total, currentFileName, onStopSync)
             }
@@ -361,7 +346,6 @@ fun MainAppScreen(
                         librarySynced = syncedCount,
                         onStartSync = { onStartSync(settings) }
                     )
-                    
                     LogConsole(
                         modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black),
                         logs = logs
@@ -415,7 +399,6 @@ fun MainSyncContent(
     onStartSync: () -> Unit
 ) {
     val allSynced = libraryTotal > 0 && librarySynced >= libraryTotal
-
     Column(
         modifier = modifier.fillMaxWidth().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -432,9 +415,7 @@ fun MainSyncContent(
                 StatRow("Remaining:", (libraryTotal - librarySynced).coerceAtLeast(0).toString())
             }
         }
-
         Spacer(modifier = Modifier.height(24.dp))
-
         if (settings.url.isBlank()) {
             Text("Please configure WebDAV settings in the Settings tab.", color = MaterialTheme.colorScheme.error)
         } else {
@@ -444,15 +425,9 @@ fun MainSyncContent(
                 Text("Ready to sync to:", style = MaterialTheme.typography.labelLarge)
                 Text(settings.url, style = MaterialTheme.typography.bodyMedium)
             }
-            
             Spacer(modifier = Modifier.height(24.dp))
-            
             if (!isSyncing) {
-                Button(
-                    onClick = onStartSync, 
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !allSynced
-                ) { 
+                Button(onClick = onStartSync, modifier = Modifier.fillMaxWidth(), enabled = !allSynced) { 
                     Text("Start Sync Now") 
                 }
             }
@@ -497,7 +472,6 @@ fun EntriesScreen(modifier: Modifier = Modifier, entries: List<SyncedPhoto>, onD
     } else {
         var itemsToDelete by remember { mutableStateOf(setOf<Long>()) }
         val scope = rememberCoroutineScope()
-
         LazyColumn(modifier = modifier) {
             stickyHeader {
                 Surface(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.secondaryContainer) {
@@ -515,33 +489,20 @@ fun EntriesScreen(modifier: Modifier = Modifier, entries: List<SyncedPhoto>, onD
                 ) {
                     Column {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(8.dp)
-                                .clickable {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    val clip = ClipData.newPlainText("filename", entry.fileName)
-                                    clipboard.setPrimaryClip(clip)
-                                    Toast.makeText(context, "Copied: ${entry.fileName}", Toast.LENGTH_SHORT).show()
-                                },
+                            modifier = Modifier.fillMaxWidth().padding(8.dp).clickable {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val clip = ClipData.newPlainText("filename", entry.fileName)
+                                clipboard.setPrimaryClip(clip)
+                                Toast.makeText(context, "Copied: ${entry.fileName}", Toast.LENGTH_SHORT).show()
+                            },
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = entry.fileName,
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(entry.timestamp)),
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodySmall,
-                                textAlign = TextAlign.Center
-                            )
+                            Text(text = entry.fileName, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(text = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(entry.timestamp)), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
                             IconButton(onClick = {
                                 scope.launch {
                                     itemsToDelete = itemsToDelete + entry.id
-                                    delay(300) // Match the exit animation duration
+                                    delay(300)
                                     onDelete(entry)
                                 }
                             }) {
@@ -569,111 +530,31 @@ fun SettingsTabScreen(
     var pass by remember(initialSettings.password) { mutableStateOf(initialSettings.password) }
     var backgroundSync by remember(initialSettings.backgroundSync) { mutableStateOf(initialSettings.backgroundSync) }
     var selectedFolders by remember(initialSettings.selectedFolders) { mutableStateOf(initialSettings.selectedFolders) }
-    
     val keyboardController = LocalSoftwareKeyboardController.current
-
-    LazyColumn(
-        modifier = modifier.padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
+    LazyColumn(modifier = modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item { OutlinedTextField(enabled = !isSyncing, value = url, onValueChange = { url = it }, label = { Text("WebDAV URL") }, placeholder = { Text("https://dav.example.com/photos") }, modifier = Modifier.fillMaxWidth()) }
+        item { OutlinedTextField(enabled = !isSyncing, value = user, onValueChange = { user = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth()) }
+        item { OutlinedTextField(enabled = !isSyncing, value = pass, onValueChange = { pass = it }, label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth()) }
         item {
-            OutlinedTextField(
-                value = url,
-                onValueChange = { url = it },
-                label = { Text("WebDAV URL") },
-                placeholder = { Text("https://dav.example.com/photos") },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !isSyncing
-            )
-        }
-
-        item {
-            OutlinedTextField(
-                value = user,
-                onValueChange = { user = it },
-                label = { Text("Username") },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !isSyncing
-            )
-        }
-
-        item {
-            OutlinedTextField(
-                value = pass,
-                onValueChange = { pass = it },
-                label = { Text("Password") },
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !isSyncing
-            )
-        }
-
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Background Sync", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "Sync photos automatically when charging and connected to Wi-Fi",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Text("Sync photos automatically when charging and connected to Wi-Fi", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Switch(
-                    checked = backgroundSync,
-                    onCheckedChange = { backgroundSync = it },
-                    enabled = !isSyncing
-                )
+                Switch(enabled = !isSyncing, checked = backgroundSync, onCheckedChange = { backgroundSync = it })
             }
         }
-
         item {
             Text("Sync Folders", style = MaterialTheme.typography.titleMedium)
             Text("If none selected, all folders will be synced.", style = MaterialTheme.typography.bodySmall)
         }
-
         items(availableFolders) { folder ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = !isSyncing) {
-                        selectedFolders = if (selectedFolders.contains(folder)) {
-                            selectedFolders - folder
-                        } else {
-                            selectedFolders + folder
-                        }
-                    },
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Checkbox(
-                    checked = selectedFolders.contains(folder),
-                    onCheckedChange = null, // Handled by row clickable
-                    enabled = !isSyncing
-                )
-                Text(
-                    text = folder, 
-                    modifier = Modifier.padding(start = 8.dp),
-                    color = if (!isSyncing) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                )
+            Row(modifier = Modifier.fillMaxWidth().clickable(enabled = !isSyncing) { selectedFolders = if (selectedFolders.contains(folder)) selectedFolders - folder else selectedFolders + folder }, verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(enabled = !isSyncing, checked = selectedFolders.contains(folder), onCheckedChange = null)
+                Text(text = folder, modifier = Modifier.padding(start = 8.dp), color = if (!isSyncing) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
             }
         }
-
-        item {
-            Button(
-                onClick = { 
-                    keyboardController?.hide()
-                    onSave(WebDavSettings(url, user, pass, backgroundSync, selectedFolders)) 
-                },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !isSyncing
-            ) {
-                Text("Save Settings")
-            }
-        }
+        item { Button(enabled = !isSyncing, onClick = { keyboardController?.hide(); onSave(WebDavSettings(url, user, pass, backgroundSync, selectedFolders)) }, modifier = Modifier.fillMaxWidth()) { Text("Save Settings") } }
     }
 }
 
