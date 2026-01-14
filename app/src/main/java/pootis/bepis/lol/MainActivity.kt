@@ -254,7 +254,7 @@ class MainActivity : ComponentActivity() {
             .setInputData(data)
             .setConstraints(constraints)
             .build()
-        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(BACKGROUND_SYNC_TASK, ExistingPeriodicWorkPolicy.KEEP, syncRequest)
+        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(BACKGROUND_SYNC_TASK, ExistingPeriodicWorkPolicy.UPDATE, syncRequest)
     }
 
     private fun stopSyncWorker() {
