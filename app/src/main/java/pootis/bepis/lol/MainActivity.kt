@@ -61,6 +61,7 @@ import kotlinx.coroutines.launch
 import pootis.bepis.lol.ui.theme.LolsyncTheme
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.roundToInt
 
 private const val FOREGROUND_SYNC_TASK = "UnifiedPhotoSync"
 private const val REBUILD_DB_SYNC_TASK = "ReconcileDatabase"
@@ -115,6 +116,7 @@ class MainActivity : ComponentActivity() {
                 } else {
                     WorkManager.getInstance(applicationContext).cancelUniqueWork(BACKGROUND_SYNC_TASK)
                 }
+                // Trigger library count update whenever settings (including folder selection) change
                 updateLibraryCount(settings.selectedFolders)
             }
         }
@@ -248,7 +250,7 @@ class MainActivity : ComponentActivity() {
             "selectedFolders" to settings.selectedFolders.toTypedArray()
         )
         val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).setRequiresCharging(true).build()
-        val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(1, java.util.concurrent.TimeUnit.MINUTES)
+        val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(settings.backgroundSyncInterval.toLong(), java.util.concurrent.TimeUnit.MINUTES)
             .setInputData(data)
             .setConstraints(constraints)
             .build()
@@ -338,6 +340,7 @@ fun MainAppScreen(
         }
     ) { innerPadding ->
         Column(modifier = Modifier.padding(innerPadding).fillMaxSize().animateContentSize()) {
+            // Global Progress Bar - fades in on top
             AnimatedVisibility(
                 visible = isSyncing,
                 enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
@@ -356,6 +359,7 @@ fun MainAppScreen(
                         librarySynced = syncedCount,
                         onStartSync = { onStartSync(settings) }
                     )
+                    
                     LogConsole(
                         modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black),
                         logs = logs
@@ -409,6 +413,7 @@ fun MainSyncContent(
     onStartSync: () -> Unit
 ) {
     val allSynced = libraryTotal > 0 && librarySynced >= libraryTotal
+
     Column(
         modifier = modifier.fillMaxWidth().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -425,7 +430,9 @@ fun MainSyncContent(
                 StatRow("Remaining:", (libraryTotal - librarySynced).coerceAtLeast(0).toString())
             }
         }
+
         Spacer(modifier = Modifier.height(24.dp))
+
         if (settings.url.isBlank()) {
             Text("Please configure WebDAV settings in the Settings tab.", color = MaterialTheme.colorScheme.error)
         } else {
@@ -435,9 +442,15 @@ fun MainSyncContent(
                 Text("Ready to sync to:", style = MaterialTheme.typography.labelLarge)
                 Text(settings.url, style = MaterialTheme.typography.bodyMedium)
             }
+            
             Spacer(modifier = Modifier.height(24.dp))
+            
             if (!isSyncing) {
-                Button(onClick = onStartSync, modifier = Modifier.fillMaxWidth(), enabled = !allSynced) { 
+                Button(
+                    onClick = onStartSync, 
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !allSynced
+                ) { 
                     Text("Start Sync Now") 
                 }
             }
@@ -533,20 +546,33 @@ fun EntriesScreen(modifier: Modifier = Modifier, entries: List<SyncedPhoto>, onD
                     ) {
                         Column {
                             Row(
-                                modifier = Modifier.fillMaxWidth().padding(8.dp).clickable {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    val clip = ClipData.newPlainText("filename", entry.fileName)
-                                    clipboard.setPrimaryClip(clip)
-                                    Toast.makeText(context, "Copied: ${entry.fileName}", Toast.LENGTH_SHORT).show()
-                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp)
+                                    .clickable {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        val clip = ClipData.newPlainText("filename", entry.fileName)
+                                        clipboard.setPrimaryClip(clip)
+                                        Toast.makeText(context, "Copied: ${entry.fileName}", Toast.LENGTH_SHORT).show()
+                                    },
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(text = entry.fileName, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(text = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(entry.timestamp)), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+                                Text(
+                                    text = entry.fileName,
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(entry.timestamp)),
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    textAlign = TextAlign.Center
+                                )
                                 IconButton(onClick = {
                                     scope.launch {
                                         itemsToDelete = itemsToDelete + entry.id
-                                        delay(300)
+                                        delay(300) // Match the exit animation duration
                                         onDelete(entry)
                                     }
                                 }) {
@@ -574,32 +600,128 @@ fun SettingsTabScreen(
     var user by remember(initialSettings.username) { mutableStateOf(initialSettings.username) }
     var pass by remember(initialSettings.password) { mutableStateOf(initialSettings.password) }
     var backgroundSync by remember(initialSettings.backgroundSync) { mutableStateOf(initialSettings.backgroundSync) }
+    var backgroundInterval by remember(initialSettings.backgroundSyncInterval) { mutableFloatStateOf(initialSettings.backgroundSyncInterval.toFloat()) }
     var selectedFolders by remember(initialSettings.selectedFolders) { mutableStateOf(initialSettings.selectedFolders) }
+    
     val keyboardController = LocalSoftwareKeyboardController.current
-    LazyColumn(modifier = modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { OutlinedTextField(enabled = !isSyncing, value = url, onValueChange = { url = it }, label = { Text("WebDAV URL") }, placeholder = { Text("https://dav.example.com/photos") }, modifier = Modifier.fillMaxWidth()) }
-        item { OutlinedTextField(enabled = !isSyncing, value = user, onValueChange = { user = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth()) }
-        item { OutlinedTextField(enabled = !isSyncing, value = pass, onValueChange = { pass = it }, label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth()) }
+
+    LazyColumn(
+        modifier = modifier.padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
         item {
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            OutlinedTextField(
+                value = url,
+                onValueChange = { url = it },
+                label = { Text("WebDAV URL") },
+                placeholder = { Text("https://dav.example.com/photos") },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isSyncing
+            )
+        }
+
+        item {
+            OutlinedTextField(
+                value = user,
+                onValueChange = { user = it },
+                label = { Text("Username") },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isSyncing
+            )
+        }
+
+        item {
+            OutlinedTextField(
+                value = pass,
+                onValueChange = { pass = it },
+                label = { Text("Password") },
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isSyncing
+            )
+        }
+
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Background Sync", style = MaterialTheme.typography.bodyLarge)
-                    Text("Sync photos automatically when charging and connected to Wi-Fi", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "Sync photos automatically when charging and connected to Wi-Fi",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-                Switch(enabled = !isSyncing, checked = backgroundSync, onCheckedChange = { backgroundSync = it })
+                Switch(
+                    checked = backgroundSync,
+                    onCheckedChange = { backgroundSync = it },
+                    enabled = !isSyncing
+                )
             }
         }
+
+        if (backgroundSync) {
+            item {
+                Column {
+                    Text("Background Sync Interval: ${backgroundInterval.roundToInt()} minutes", style = MaterialTheme.typography.bodyMedium)
+                    Slider(
+                        value = backgroundInterval,
+                        onValueChange = { backgroundInterval = it },
+                        valueRange = 15f..1440f, // 15 mins to 24 hours
+                        steps = (1440 - 15) / 15 - 1, // 15 minute increments
+                        enabled = !isSyncing
+                    )
+                }
+            }
+        }
+
         item {
             Text("Sync Folders", style = MaterialTheme.typography.titleMedium)
             Text("If none selected, all folders will be synced.", style = MaterialTheme.typography.bodySmall)
         }
+
         items(availableFolders) { folder ->
-            Row(modifier = Modifier.fillMaxWidth().clickable(enabled = !isSyncing) { selectedFolders = if (selectedFolders.contains(folder)) selectedFolders - folder else selectedFolders + folder }, verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(enabled = !isSyncing, checked = selectedFolders.contains(folder), onCheckedChange = null)
-                Text(text = folder, modifier = Modifier.padding(start = 8.dp), color = if (!isSyncing) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !isSyncing) {
+                        selectedFolders = if (selectedFolders.contains(folder)) {
+                            selectedFolders - folder
+                        } else {
+                            selectedFolders + folder
+                        }
+                    },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(
+                    checked = selectedFolders.contains(folder),
+                    onCheckedChange = null, // Handled by row clickable
+                    enabled = !isSyncing
+                )
+                Text(
+                    text = folder, 
+                    modifier = Modifier.padding(start = 8.dp),
+                    color = if (!isSyncing) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                )
             }
         }
-        item { Button(enabled = !isSyncing, onClick = { keyboardController?.hide(); onSave(WebDavSettings(url, user, pass, backgroundSync, selectedFolders)) }, modifier = Modifier.fillMaxWidth()) { Text("Save Settings") } }
+
+        item {
+            Button(
+                onClick = { 
+                    keyboardController?.hide()
+                    onSave(WebDavSettings(url, user, pass, backgroundSync, backgroundInterval.roundToInt(), selectedFolders)) 
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isSyncing
+            ) {
+                Text("Save Settings")
+            }
+        }
     }
 }
 
