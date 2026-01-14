@@ -101,6 +101,17 @@ abstract class BaseSyncWorker(appContext: Context, workerParams: WorkerParameter
         notificationManager.notify(notificationId + 100, builder.build())
     }
 
+    protected fun showLaunchedNotification(title: String, message: String) {
+        val builder = NotificationCompat.Builder(applicationContext, channelId)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+
+        notificationManager.notify(notificationId + 200, builder.build())
+    }
+
     protected suspend fun getAllLocalMedia(selectedFolders: Set<String>): List<MediaItem> {
         val items = mutableListOf<MediaItem>()
         items.addAll(queryMedia(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, selectedFolders))

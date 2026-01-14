@@ -22,6 +22,12 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
         log("Starting sync worker...")
         
         createNotificationChannel()
+        
+        // Show launched notification if triggered in background
+        if (runAttemptCount == 0) {
+            showLaunchedNotification("Photo Sync", "Background synchronization started.")
+        }
+
         try {
             setForeground(createForegroundInfo(0, 0, "Initializing sync...", "Syncing Photos"))
         } catch (e: Exception) {
