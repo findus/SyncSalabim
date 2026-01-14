@@ -248,7 +248,8 @@ class MainActivity : ComponentActivity() {
             "baseUrl" to settings.url,
             "user" to settings.username,
             "password" to settings.password,
-            "selectedFolders" to settings.selectedFolders.toTypedArray()
+            "selectedFolders" to settings.selectedFolders.toTypedArray(),
+            "isBackgroundTask" to true
         )
         val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).setRequiresCharging(true).build()
         val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(settings.backgroundSyncInterval.toLong(), java.util.concurrent.TimeUnit.MINUTES)

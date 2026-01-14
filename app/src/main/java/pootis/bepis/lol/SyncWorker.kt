@@ -20,12 +20,20 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
 
     override suspend fun doWork(): Result {
         log("Starting sync worker...")
-        
+
+        val baseUrlStr = inputData.getString("baseUrl")?.removeSuffix("/") ?: return Result.failure()
+        val user = inputData.getString("user") ?: return Result.failure()
+        val password = inputData.getString("password") ?: return Result.failure()
+        val selectedFolders = inputData.getStringArray("selectedFolders")?.toSet() ?: emptySet()
+        val isBackgroundTask = inputData.getBoolean("isBackgroundTask", false)
+
+        val bgt = if (isBackgroundTask) { "Background" } else { "" };
+
         createNotificationChannel()
         
         // Show launched notification if triggered in background
         if (runAttemptCount == 0) {
-            showLaunchedNotification("Photo Sync", "Background synchronization started.")
+            showLaunchedNotification("$bgt Photo Sync", "Synchronization started.")
         }
 
         try {
@@ -34,10 +42,6 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
             log("Failed to set foreground info", e)
         }
 
-        val baseUrlStr = inputData.getString("baseUrl")?.removeSuffix("/") ?: return Result.failure()
-        val user = inputData.getString("user") ?: return Result.failure()
-        val password = inputData.getString("password") ?: return Result.failure()
-        val selectedFolders = inputData.getStringArray("selectedFolders")?.toSet() ?: emptySet()
 
         val basicAuth = Credentials.basic(user, password)
         val baseUrl = baseUrlStr.toHttpUrl()
@@ -89,8 +93,8 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
             }
 
             setProgress(workDataOf("progress" to 1f, "current" to total, "total" to total, "name" to "Done"))
-            log("Sync completed successfully. Synced $successCount items.")
-            showFinishedNotification("Sync Finished", "Successfully synced $successCount items.")
+            log(" ${bgt} Sync completed successfully. Synced $successCount items.")
+            showFinishedNotification("$bgt Sync Finished", "Successfully synced $successCount items.")
             
             return Result.success()
         } catch (e: Exception) {
