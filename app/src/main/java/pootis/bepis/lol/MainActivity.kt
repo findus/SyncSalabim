@@ -199,7 +199,7 @@ class MainActivity : ComponentActivity() {
             wm.getWorkInfosForUniqueWork(REBUILD_DB_SYNC_TASK).get(),
             wm.getWorkInfosForUniqueWork(BACKGROUND_SYNC_TASK).get()
         )
-        return statuses.flatten().any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+        return statuses.flatten().any { it.state == WorkInfo.State.RUNNING }
     }
 
     private fun startSyncWorker(settings: WebDavSettings) {
@@ -294,7 +294,11 @@ fun MainAppScreen(
     val backgroundWorkInfos by workManager.getWorkInfosForUniqueWorkFlow(BACKGROUND_SYNC_TASK).collectAsStateWithLifecycle(initialValue = emptyList())
     val reconcileWorkInfos by workManager.getWorkInfosForUniqueWorkFlow(REBUILD_DB_SYNC_TASK).collectAsStateWithLifecycle(initialValue = emptyList())
 
-    val activeWork = (manualWorkInfos + backgroundWorkInfos + reconcileWorkInfos).firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+    val activeManualWork = manualWorkInfos.firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+    val activeReconcileWork = reconcileWorkInfos.firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+    val activeBackgroundWork = backgroundWorkInfos.firstOrNull { it.state == WorkInfo.State.RUNNING }
+    
+    val activeWork = activeManualWork ?: activeReconcileWork ?: activeBackgroundWork
     val isSyncing = activeWork != null
     val progress = activeWork?.progress?.getFloat("progress", -1f) ?: -1f
     val current = activeWork?.progress?.getInt("current", 0) ?: 0
