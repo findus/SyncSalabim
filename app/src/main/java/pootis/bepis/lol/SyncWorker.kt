@@ -55,7 +55,7 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
 
             if (total == 0) {
                 setProgress(workDataOf("progress" to 1f, "current" to 0, "total" to 0, "name" to "Done"))
-                showFinishedNotification("Sync Finished", "Everything is up to date.")
+                showFinishedNotification("$bgt Sync Finished", "Everything is up to date.")
                 return Result.success()
             }
 
@@ -98,8 +98,8 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
             
             return Result.success()
         } catch (e: Exception) {
-            log("Sync failed with exception", e)
-            showFinishedNotification("Sync Failed", e.message ?: "An unexpected error occurred.")
+            log("$bgt Sync failed with exception", e)
+            showFinishedNotification("$bgt Sync Failed", e.message ?: "An unexpected error occurred.")
             return Result.retry()
         }
     }

@@ -256,6 +256,11 @@ class MainActivity : ComponentActivity() {
             .setInputData(data)
             .setConstraints(constraints)
             .build()
+
+        if (WorkManager.getInstance(applicationContext).getWorkInfosForUniqueWork(BACKGROUND_SYNC_TASK).get().any { it.state == WorkInfo.State.RUNNING }) {
+            return
+        }
+
         WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(BACKGROUND_SYNC_TASK, ExistingPeriodicWorkPolicy.UPDATE, syncRequest)
     }
 
