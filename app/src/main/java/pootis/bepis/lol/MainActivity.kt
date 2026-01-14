@@ -31,8 +31,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
@@ -465,51 +467,86 @@ fun SyncProgressSection(progress: Float, current: Int, total: Int, fileName: Str
 @Composable
 fun EntriesScreen(modifier: Modifier = Modifier, entries: List<SyncedPhoto>, onDelete: (SyncedPhoto) -> Unit) {
     val context = LocalContext.current
-    if (entries.isEmpty()) {
-        Box(modifier = modifier, contentAlignment = Alignment.Center) {
-            Text("No synced entries found.")
+    var searchQuery by remember { mutableStateOf("") }
+    
+    val filteredEntries = remember(entries, searchQuery) {
+        if (searchQuery.isBlank()) {
+            entries
+        } else {
+            entries.filter { it.fileName.contains(searchQuery, ignoreCase = true) }
         }
-    } else {
-        var itemsToDelete by remember { mutableStateOf(setOf<Long>()) }
-        val scope = rememberCoroutineScope()
-        LazyColumn(modifier = modifier) {
-            stickyHeader {
-                Surface(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.secondaryContainer) {
-                    Row(modifier = Modifier.padding(8.dp)) {
-                        Text("File Name", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-                        Text("Synced At", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center)
-                        Spacer(modifier = Modifier.width(48.dp))
+    }
+
+    Column(modifier = modifier) {
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
+            placeholder = { Text("Search synced files...") },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            trailingIcon = {
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = { searchQuery = "" }) {
+                        Icon(Icons.Default.Close, contentDescription = "Clear search")
                     }
                 }
+            },
+            singleLine = true,
+            colors = OutlinedTextFieldDefaults.colors(
+                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                focusedContainerColor = MaterialTheme.colorScheme.surface
+            )
+        )
+
+        if (filteredEntries.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(if (searchQuery.isEmpty()) "No synced entries found." else "No matches found.")
             }
-            items(items = entries, key = { it.id }) { entry ->
-                AnimatedVisibility(
-                    visible = !itemsToDelete.contains(entry.id),
-                    exit = shrinkVertically(animationSpec = tween(300)) + fadeOut()
-                ) {
-                    Column {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(8.dp).clickable {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText("filename", entry.fileName)
-                                clipboard.setPrimaryClip(clip)
-                                Toast.makeText(context, "Copied: ${entry.fileName}", Toast.LENGTH_SHORT).show()
-                            },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(text = entry.fileName, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(text = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(entry.timestamp)), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
-                            IconButton(onClick = {
-                                scope.launch {
-                                    itemsToDelete = itemsToDelete + entry.id
-                                    delay(300)
-                                    onDelete(entry)
-                                }
-                            }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete entry", tint = MaterialTheme.colorScheme.error)
-                            }
+        } else {
+            var itemsToDelete by remember { mutableStateOf(setOf<Long>()) }
+            val scope = rememberCoroutineScope()
+            
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                stickyHeader {
+                    Surface(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.secondaryContainer) {
+                        Row(modifier = Modifier.padding(8.dp)) {
+                            Text("File Name", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                            Text("Synced At", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center)
+                            Spacer(modifier = Modifier.width(48.dp))
                         }
-                        HorizontalDivider()
+                    }
+                }
+                items(items = filteredEntries, key = { it.id }) { entry ->
+                    AnimatedVisibility(
+                        visible = !itemsToDelete.contains(entry.id),
+                        exit = shrinkVertically(animationSpec = tween(300)) + fadeOut()
+                    ) {
+                        Column {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(8.dp).clickable {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val clip = ClipData.newPlainText("filename", entry.fileName)
+                                    clipboard.setPrimaryClip(clip)
+                                    Toast.makeText(context, "Copied: ${entry.fileName}", Toast.LENGTH_SHORT).show()
+                                },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(text = entry.fileName, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(text = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(entry.timestamp)), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+                                IconButton(onClick = {
+                                    scope.launch {
+                                        itemsToDelete = itemsToDelete + entry.id
+                                        delay(300)
+                                        onDelete(entry)
+                                    }
+                                }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete entry", tint = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                            HorizontalDivider()
+                        }
                     }
                 }
             }
