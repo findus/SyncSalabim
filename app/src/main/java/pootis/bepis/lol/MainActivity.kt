@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -305,6 +306,16 @@ fun MainAppScreen(
     val total = activeWork?.progress?.getInt("total", 0) ?: 0
     val currentFileName = activeWork?.progress?.getString("name") ?: ""
 
+    val nextRunTime = remember(backgroundWorkInfos, settings.backgroundSync) {
+        val info = backgroundWorkInfos.firstOrNull()
+        if (settings.backgroundSync && info != null && info.state != WorkInfo.State.CANCELLED) {
+            val nextTime = info.nextScheduleTimeMillis
+            if (nextTime > 0) {
+                SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(nextTime))
+            } else null
+        } else null
+    }
+
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
@@ -361,6 +372,7 @@ fun MainAppScreen(
                         isSyncing = isSyncing,
                         libraryTotal = totalLibraryCount,
                         librarySynced = syncedCount,
+                        nextRunTime = nextRunTime,
                         onStartSync = { onStartSync(settings) }
                     )
                     
@@ -414,6 +426,7 @@ fun MainSyncContent(
     isSyncing: Boolean,
     libraryTotal: Int,
     librarySynced: Int,
+    nextRunTime: String?,
     onStartSync: () -> Unit
 ) {
     val allSynced = libraryTotal > 0 && librarySynced >= libraryTotal
@@ -445,6 +458,15 @@ fun MainSyncContent(
             } else {
                 Text("Ready to sync to:", style = MaterialTheme.typography.labelLarge)
                 Text(settings.url, style = MaterialTheme.typography.bodyMedium)
+            }
+            
+            if (nextRunTime != null) {
+                Text(
+                    text = "Next background sync: $nextRunTime",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
             }
             
             Spacer(modifier = Modifier.height(24.dp))
