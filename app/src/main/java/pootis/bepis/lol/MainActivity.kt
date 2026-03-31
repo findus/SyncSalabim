@@ -175,9 +175,13 @@ class MainActivity : ComponentActivity() {
 
     private fun getAvailableFolders(): List<String> {
         val folders = mutableSetOf<String>()
-        val projection = arrayOf(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
+        val projection = arrayOf(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME, MediaStore.MediaColumns.RELATIVE_PATH)
+        val selection = "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? OR " +
+                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? OR " +
+                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?"
+        val selectionArgs = arrayOf("DCIM/%", "Pictures/Screenshots%", "Pictures/Screen recordings%")
         fun query(uri: android.net.Uri) {
-            contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+            contentResolver.query(uri, projection, selection, selectionArgs, null)?.use { cursor ->
                 val bucketColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
                 while (cursor.moveToNext()) {
                     cursor.getString(bucketColumn)?.let { folders.add(it) }
