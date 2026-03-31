@@ -125,6 +125,7 @@ abstract class BaseSyncWorker(appContext: Context, workerParams: WorkerParameter
             MediaStore.MediaColumns._ID,
             MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.DATE_TAKEN,
+            MediaStore.MediaColumns.DATE_ADDED,
             MediaStore.MediaColumns.MIME_TYPE,
             MediaStore.MediaColumns.BUCKET_DISPLAY_NAME,
             MediaStore.MediaColumns.SIZE
@@ -151,15 +152,19 @@ abstract class BaseSyncWorker(appContext: Context, workerParams: WorkerParameter
         )?.use { cursor ->
             val idColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
             val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
-            val dateColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_TAKEN)
+            val dateTakenColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_TAKEN)
+            val dateAddedColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
             val mimeColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
-
             val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
+
             while (cursor.moveToNext()) {
+                val dateTaken = cursor.getLong(dateTakenColumn)
+                // DATE_ADDED is in seconds; DATE_TAKEN is in milliseconds
+                val resolvedDate = if (dateTaken > 0) dateTaken else cursor.getLong(dateAddedColumn) * 1000L
                 items.add(MediaItem(
                     id = cursor.getLong(idColumn),
                     name = cursor.getString(nameColumn),
-                    dateTaken = cursor.getLong(dateColumn),
+                    dateTaken = resolvedDate,
                     mimeType = cursor.getString(mimeColumn),
                     size = cursor.getLong(sizeColumn),
                     collection = collection
