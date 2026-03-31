@@ -59,10 +59,14 @@ class ReconcileWorker(appContext: Context, workerParams: WorkerParameters) :
                 val remoteUrl = getRemoteUrl(item, baseUrl)
 
                 // 4. Check if file exists remotely (using HEAD)
-                if (remoteFileExists(remoteUrl.toString(), auth)) {
+                val headCode = remoteFileExists(remoteUrl.toString(), auth)
+                if (headCode in 200..299) {
                     // 5. Add to local database if it exists remotely
                     db.photoDao().insert(SyncedPhoto(item.id, item.name, System.currentTimeMillis()))
+                    log("Exists remotely: ${item.name} [HTTP $headCode]")
                     reconciled++
+                } else {
+                    log("Not found remotely: ${item.name} [HTTP $headCode]")
                 }
             }
 

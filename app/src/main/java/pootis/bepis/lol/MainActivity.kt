@@ -315,6 +315,7 @@ fun MainAppScreen(
     val current = activeWork?.progress?.getInt("current", 0) ?: 0
     val total = activeWork?.progress?.getInt("total", 0) ?: 0
     val currentFileName = activeWork?.progress?.getString("name") ?: ""
+    val errorCount = activeWork?.progress?.getInt("errorCount", 0) ?: 0
 
     val nextRunTime = remember(backgroundWorkInfos, settings.backgroundSync) {
         val info = backgroundWorkInfos.firstOrNull()
@@ -371,7 +372,7 @@ fun MainAppScreen(
                 enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
                 exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
             ) {
-                SyncProgressSection(progress, current, total, currentFileName, onStopSync)
+                SyncProgressSection(progress, current, total, currentFileName, errorCount, onStopSync)
             }
 
             when (selectedScreen) {
@@ -503,16 +504,22 @@ fun StatRow(label: String, value: String) {
 }
 
 @Composable
-fun SyncProgressSection(progress: Float, current: Int, total: Int, fileName: String, onStopSync: () -> Unit) {
+fun SyncProgressSection(progress: Float, current: Int, total: Int, fileName: String, errorCount: Int, onStopSync: () -> Unit) {
+    val hasError = errorCount > 0
+    val barColor = if (hasError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
     Column(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         if (progress >= 0) {
-            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(8.dp))
+            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(8.dp), color = barColor)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Syncing $current/$total", style = MaterialTheme.typography.labelSmall)
+                Text(
+                    "Syncing $current/$total" + if (hasError) " ($errorCount failed)" else "",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (hasError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                )
                 Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
             }
         } else {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = barColor)
             Text("Preparing...", style = MaterialTheme.typography.labelSmall)
         }
         Text(fileName, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)

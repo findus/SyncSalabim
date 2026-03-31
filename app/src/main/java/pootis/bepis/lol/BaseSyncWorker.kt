@@ -126,7 +126,8 @@ abstract class BaseSyncWorker(appContext: Context, workerParams: WorkerParameter
             MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.DATE_TAKEN,
             MediaStore.MediaColumns.MIME_TYPE,
-            MediaStore.MediaColumns.BUCKET_DISPLAY_NAME
+            MediaStore.MediaColumns.BUCKET_DISPLAY_NAME,
+            MediaStore.MediaColumns.SIZE
         )
 
         val selection = if (selectedFolders.isNotEmpty()) {
@@ -153,12 +154,14 @@ abstract class BaseSyncWorker(appContext: Context, workerParams: WorkerParameter
             val dateColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_TAKEN)
             val mimeColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
 
+            val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
             while (cursor.moveToNext()) {
                 items.add(MediaItem(
                     id = cursor.getLong(idColumn),
                     name = cursor.getString(nameColumn),
                     dateTaken = cursor.getLong(dateColumn),
                     mimeType = cursor.getString(mimeColumn),
+                    size = cursor.getLong(sizeColumn),
                     collection = collection
                 ))
             }
@@ -171,6 +174,7 @@ abstract class BaseSyncWorker(appContext: Context, workerParams: WorkerParameter
         val name: String,
         val dateTaken: Long,
         val mimeType: String?,
+        val size: Long,
         val collection: Uri
     )
 
@@ -186,19 +190,17 @@ abstract class BaseSyncWorker(appContext: Context, workerParams: WorkerParameter
             .build()
     }
 
-    protected fun remoteFileExists(url: String, auth: String): Boolean {
+    protected fun remoteFileExists(url: String, auth: String): Int {
         val request = Request.Builder()
             .url(url)
             .head()
             .addHeader("Authorization", auth)
             .build()
-        
+
         return try {
-            client.newCall(request).execute().use { response ->
-                response.isSuccessful
-            }
+            client.newCall(request).execute().use { response -> response.code }
         } catch (e: Exception) {
-            false
+            -1
         }
     }
 

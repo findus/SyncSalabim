@@ -7,7 +7,7 @@ import androidx.work.workDataOf
 import okhttp3.Credentials
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.RequestBody.Companion.toRequestBody
+import okio.source
 import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.*
@@ -75,26 +75,35 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
 
             // Step 2: Upload items
             var successCount = 0
+            var errorCount = 0
             for ((index, item) in itemsToSync.withIndex()) {
                 val current = index + 1
                 val progressValue = index.toFloat() / total
-                
+
                 log("Uploading ($current/$total): ${item.name}")
-                setProgress(workDataOf("progress" to progressValue, "current" to current, "total" to total, "name" to item.name))
+                setProgress(workDataOf("progress" to progressValue, "current" to current, "total" to total, "name" to item.name, "errorCount" to errorCount))
                 updateProgressNotification(current, total, item.name, "Syncing Photos")
 
-                if (uploadMedia(item, baseUrl, basicAuth)) {
+                val responseCode = uploadMedia(item, baseUrl, basicAuth)
+                if (responseCode in 200..299) {
                     db.photoDao().insert(SyncedPhoto(item.id, item.name, System.currentTimeMillis()))
-                    log("Successfully synced: ${item.name}")
+                    log("Successfully synced: ${item.name} [$responseCode]")
                     successCount++
                 } else {
-                    log("Failed to upload: ${item.name}")
+                    errorCount++
+                    log("ERROR: Failed to upload ${item.name} [HTTP $responseCode] ($errorCount error(s) so far)")
+                    setProgress(workDataOf("progress" to progressValue, "current" to current, "total" to total, "name" to item.name, "errorCount" to errorCount))
                 }
             }
 
-            setProgress(workDataOf("progress" to 1f, "current" to total, "total" to total, "name" to "Done"))
-            log(" ${bgt} Sync completed successfully. Synced $successCount items.")
-            showFinishedNotification("$bgt Sync Finished", "Successfully synced $successCount items.")
+            setProgress(workDataOf("progress" to 1f, "current" to total, "total" to total, "name" to "Done", "errorCount" to errorCount))
+            if (errorCount > 0) {
+                log("ERROR: ${bgt}Sync finished with $errorCount error(s). Synced $successCount/$total items.")
+                showFinishedNotification("$bgt Sync Finished", "Synced $successCount items, $errorCount failed.")
+            } else {
+                log("${bgt}Sync completed. Synced $successCount items.")
+                showFinishedNotification("$bgt Sync Finished", "Successfully synced $successCount items.")
+            }
             
             return Result.success()
         } catch (e: Exception) {
@@ -104,29 +113,34 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
         }
     }
 
-    private fun uploadMedia(item: MediaItem, baseUrl: okhttp3.HttpUrl, basicAuth: String): Boolean {
+    private fun uploadMedia(item: MediaItem, baseUrl: okhttp3.HttpUrl, basicAuth: String): Int {
         val targetUrl = getRemoteUrl(item, baseUrl)
         val uri = Uri.withAppendedPath(item.collection, item.id.toString())
 
         return try {
-            val inputStream: InputStream? = applicationContext.contentResolver.openInputStream(uri)
-            val bytes = inputStream?.readBytes() ?: run {
-                log("Could not read bytes for ${item.name}")
-                return false
+            val inputStream: InputStream = applicationContext.contentResolver.openInputStream(uri) ?: run {
+                log("ERROR: Could not open stream for ${item.name}")
+                return -1
+            }
+
+            val requestBody = object : okhttp3.RequestBody() {
+                override fun contentType() = item.mimeType?.toMediaTypeOrNull()
+                override fun contentLength() = item.size
+                override fun writeTo(sink: okio.BufferedSink) {
+                    inputStream.use { sink.writeAll(it.source()) }
+                }
             }
 
             val request = okhttp3.Request.Builder()
                 .url(targetUrl)
-                .put(bytes.toRequestBody(item.mimeType?.toMediaTypeOrNull()))
+                .put(requestBody)
                 .addHeader("Authorization", basicAuth)
                 .build()
 
-            client.newCall(request).execute().use { response ->
-                response.isSuccessful || response.code == 201 || response.code == 204
-            }
-        } catch (e: Exception) {
-            log("Exception during upload of ${item.name}", e)
-            false
+            client.newCall(request).execute().use { response -> response.code }
+        } catch (t: Throwable) {
+            log("ERROR: Exception during upload of ${item.name}: ${t::class.simpleName}: ${t.message}")
+            -1
         }
     }
 }
