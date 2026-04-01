@@ -40,6 +40,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -292,7 +294,11 @@ fun MainAppScreen(
     onStartReconcile: (WebDavSettings) -> Unit,
     availableFolders: List<String>
 ) {
-    var selectedScreen by remember { mutableStateOf<Screen>(Screen.Sync) }
+    val screens = listOf(Screen.Sync, Screen.Entries, Screen.Settings)
+    var selectedScreen by rememberSaveable(stateSaver = Saver(
+        save = { screens.indexOf(it) },
+        restore = { screens[it] }
+    )) { mutableStateOf<Screen>(Screen.Sync) }
     val scope = rememberCoroutineScope()
 
     val settings by settingsRepository.settingsFlow.collectAsStateWithLifecycle(initialValue = WebDavSettings("", "", ""))
@@ -353,7 +359,6 @@ fun MainAppScreen(
         },
         bottomBar = {
             NavigationBar {
-                val screens = listOf(Screen.Sync, Screen.Entries, Screen.Settings)
                 screens.forEach { screen ->
                     NavigationBarItem(
                         icon = { Icon(screen.icon, contentDescription = screen.title) },
