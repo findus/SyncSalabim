@@ -44,6 +44,8 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -382,20 +384,18 @@ fun MainAppScreen(
 
             when (selectedScreen) {
                 Screen.Sync -> {
-                    MainSyncContent(
-                        modifier = Modifier.weight(1f),
-                        settings = settings,
-                        isSyncing = isSyncing,
-                        libraryTotal = totalLibraryCount,
-                        librarySynced = syncedCount,
-                        nextRunTime = nextRunTime,
-                        onStartSync = { onStartSync(settings) }
-                    )
-                    
-                    LogConsole(
-                        modifier = Modifier.fillMaxWidth().height(200.dp).background(Color.Black),
-                        logs = logs
-                    )
+                    Box(modifier = Modifier.weight(1f)) {
+                        MainSyncContent(
+                            modifier = Modifier.fillMaxSize(),
+                            settings = settings,
+                            isSyncing = isSyncing,
+                            libraryTotal = totalLibraryCount,
+                            librarySynced = syncedCount,
+                            nextRunTime = nextRunTime,
+                            logs = logs,
+                            onStartSync = { onStartSync(settings) }
+                        )
+                    }
                 }
                 Screen.Entries -> {
                     EntriesScreen(
@@ -443,59 +443,94 @@ fun MainSyncContent(
     libraryTotal: Int,
     librarySynced: Int,
     nextRunTime: String?,
+    logs: List<String>,
     onStartSync: () -> Unit
 ) {
     val allSynced = libraryTotal > 0 && librarySynced >= libraryTotal
+    val surfaceColor = MaterialTheme.colorScheme.surface
+    // Background: surface color at top blending into black at bottom
+    val backgroundGradient = Brush.verticalGradient(
+        0.0f to surfaceColor,
+        1.0f to Color.Black
+    )
+    // Overlay: opaque surface color at top fading to transparent at 30%, hides text until it scrolls into view
+    val fadeOverlay = Brush.verticalGradient(
+        0.0f to surfaceColor,
+        0.3f to surfaceColor.copy(alpha = 0f),
+        1.0f to surfaceColor.copy(alpha = 0f)
+    )
 
     Column(
-        modifier = modifier.fillMaxWidth().padding(16.dp),
+        modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Library Stats", style = MaterialTheme.typography.titleMedium)
-                Spacer(modifier = Modifier.height(8.dp))
-                StatRow("Total items:", libraryTotal.toString())
-                StatRow("Synced items:", librarySynced.toString())
-                StatRow("Remaining:", (libraryTotal - librarySynced).coerceAtLeast(0).toString())
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Library Stats", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    StatRow("Total items:", libraryTotal.toString())
+                    StatRow("Synced items:", librarySynced.toString())
+                    StatRow("Remaining:", (libraryTotal - librarySynced).coerceAtLeast(0).toString())
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            if (settings.url.isBlank()) {
+                Text("Please configure WebDAV settings in the Settings tab.", color = MaterialTheme.colorScheme.error)
+            } else {
+                if (allSynced) {
+                    Text("✨ All items are synced", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
+                } else {
+                    Text("Ready to sync to:", style = MaterialTheme.typography.labelLarge)
+                    Text(settings.url, style = MaterialTheme.typography.bodyMedium)
+                }
+
+                if (nextRunTime != null) {
+                    Text(
+                        text = "Next background sync: $nextRunTime",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                if (!isSyncing) {
+                    Button(
+                        onClick = onStartSync,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !allSynced
+                    ) {
+                        Text("Start Sync Now")
+                    }
+                }
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
-
-        if (settings.url.isBlank()) {
-            Text("Please configure WebDAV settings in the Settings tab.", color = MaterialTheme.colorScheme.error)
-        } else {
-            if (allSynced) {
-                Text("✨ All items are synced", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
-            } else {
-                Text("Ready to sync to:", style = MaterialTheme.typography.labelLarge)
-                Text(settings.url, style = MaterialTheme.typography.bodyMedium)
-            }
-            
-            if (nextRunTime != null) {
-                Text(
-                    text = "Next background sync: $nextRunTime",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-            }
-            
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            if (!isSyncing) {
-                Button(
-                    onClick = onStartSync, 
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !allSynced
-                ) { 
-                    Text("Start Sync Now") 
+        // Log console flush to bottom, fades in from the top
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .background(backgroundGradient)
+                .drawWithContent {
+                    drawContent()
+                    drawRect(brush = fadeOverlay)
                 }
-            }
+        ) {
+            LogConsole(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                logs = logs
+            )
         }
     }
 }
@@ -777,9 +812,16 @@ fun SettingsTabScreen(
 fun LogConsole(modifier: Modifier = Modifier, logs: List<String>) {
     val listState = rememberLazyListState()
     LaunchedEffect(logs.size) { if (logs.isNotEmpty()) listState.animateScrollToItem(logs.size - 1) }
-    LazyColumn(state = listState, modifier = modifier.padding(4.dp)) {
+    LazyColumn(state = listState, modifier = modifier, contentPadding = PaddingValues(vertical = 4.dp)) {
         items(logs) { log ->
-            Text(text = log, color = if (log.contains("ERROR")) Color.Red else Color.LightGray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+            Text(
+                text = log,
+                color = if (log.contains("ERROR")) Color(0xFFFF6B6B) else Color(0xFFBBBBBB),
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                lineHeight = 14.sp,
+                modifier = Modifier.padding(vertical = 1.dp)
+            )
         }
     }
 }
