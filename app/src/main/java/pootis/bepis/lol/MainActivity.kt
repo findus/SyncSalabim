@@ -20,6 +20,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -376,8 +378,8 @@ fun MainAppScreen(
             // Global Progress Bar - fades in on top
             AnimatedVisibility(
                 visible = isSyncing,
-                enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
-                exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
+                enter = expandVertically(expandFrom = Alignment.Top, animationSpec = tween(400)) + fadeIn(animationSpec = tween(300)),
+                exit = shrinkVertically(shrinkTowards = Alignment.Top, animationSpec = tween(400)) + fadeOut(animationSpec = tween(300))
             ) {
                 SyncProgressSection(progress, current, total, currentFileName, errorCount, onStopSync)
             }
@@ -546,17 +548,30 @@ fun StatRow(label: String, value: String) {
 @Composable
 fun SyncProgressSection(progress: Float, current: Int, total: Int, fileName: String, errorCount: Int, onStopSync: () -> Unit) {
     val hasError = errorCount > 0
-    val barColor = if (hasError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    val animatedProgress by animateFloatAsState(
+        targetValue = progress.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
+        label = "syncProgress"
+    )
+    val barColor by animateColorAsState(
+        targetValue = if (hasError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+        animationSpec = tween(durationMillis = 300),
+        label = "barColor"
+    )
     Column(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         if (progress >= 0) {
-            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(8.dp), color = barColor)
+            LinearProgressIndicator(
+                progress = { animatedProgress },
+                modifier = Modifier.fillMaxWidth().height(8.dp),
+                color = barColor
+            )
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(
                     "Syncing $current/$total" + if (hasError) " ($errorCount failed)" else "",
                     style = MaterialTheme.typography.labelSmall,
                     color = if (hasError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                 )
-                Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
+                Text("${(animatedProgress * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
             }
         } else {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = barColor)
