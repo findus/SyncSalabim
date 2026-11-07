@@ -10,7 +10,7 @@ activityCompose = "1.8.0"
 composeBom = "2024.09.00"
 room = "2.6.1"
 work = "2.9.1"
-okhttp = "4.12.0"
+okhttp = "4.12.1"
 datastore = "1.1.1"
 
 [libraries]
