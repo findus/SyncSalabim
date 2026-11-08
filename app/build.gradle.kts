@@ -9,7 +9,7 @@ plugins {
 
 android {
     namespace = "pootis.bepis.lol"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "pootis.bepis.lol"
