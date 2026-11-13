@@ -9,7 +9,7 @@ plugins {
 
 android {
     namespace = "pootis.bepis.lol"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "pootis.bepis.lol"
@@ -31,11 +31,8 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
-    }
-    kotlinOptions {
-        jvmTarget = "11"
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
     buildFeatures {
         compose = true
